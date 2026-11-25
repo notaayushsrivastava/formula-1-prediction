@@ -22,7 +22,8 @@ from .history import load_history
 from .live import LiveRows, ToppedUpHistory, build_live_rows, find_event, next_race
 from .pipeline import CONFIG_PATH, FinalPipeline, PipelineConfig, load_config
 from .records import (
-    DOCS_DIR, RECORDS_DIR, TRACK_RECORD_PATH, RecordMeta, graded_rows, load_records,
+    DOCS_DIR, RECORDS_DIR, TRACK_RECORD_PATH, RecordMeta, check_records, graded_rows,
+    load_records,
     make_record, record_stem, save_record, score_records, write_docs, write_track_record,
 )
 
@@ -173,7 +174,9 @@ def score_all(sources: Sources, records_dir: Path | str = RECORDS_DIR,
     done = set(scores["Stem"])
     pending = [f"{r['year']} {r['event']} ({r['moment']})" for r in records
                if r["_stem"] not in done]
-    write_track_record(scores, graded, track_path, pending)
+    checks = check_records(records, results)
+    scores.attrs["checks"] = checks
+    write_track_record(scores, graded, track_path, pending, checks)
     if docs_dir is not None:
         _track_plot(scores, Path(docs_dir))
         write_docs(records, docs_dir, track_path)

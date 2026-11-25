@@ -389,7 +389,15 @@ def _score(args: argparse.Namespace) -> tuple[str, int]:
         return f"No finished races to score yet. Wrote {TRACK_RECORD_PATH}.", EXIT_OK
     shown = scores[["Stem", "win_logloss", "b0_win_logloss", "podium_logloss",
                     "b0_podium_logloss", "Favourite", "Winner"]]
-    return f"{shown.round(4).to_string(index=False)}\n\nUpdated {TRACK_RECORD_PATH}", EXIT_OK
+    lines = [shown.round(4).to_string(index=False), ""]
+    checks = scores.attrs.get("checks")
+    if checks is not None and not checks.empty:
+        lines.append("Surprises and data checks:")
+        lines += [f"  [{r.Kind}] {r.Race} ({r.Moment}): {r.Driver} {r.Text}"
+                  for r in checks.itertuples(index=False)]
+        lines.append("")
+    lines.append(f"Updated {TRACK_RECORD_PATH}")
+    return "\n".join(lines), EXIT_OK
 
 
 def _final(args: argparse.Namespace) -> tuple[str, int]:

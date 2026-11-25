@@ -297,7 +297,8 @@ def test_predict_service_respects_existing_record(tmp_path, monkeypatch):
     monkeypatch.setattr("pitwall.predict.service.HISTORY_PREDICTIONS", tmp_path / "x.parquet")
     s = fw.sources()
     when = clock(fw.at(2026, 6, "Practice 1", -5 * H))
-    out = predict_race(2026, "6", "pre", s, records_dir=tmp_path, first_year=2024, now=when)
+    out = predict_race(2026, "6", "pre", s, records_dir=tmp_path, first_year=2024, now=when,
+                       config=default_config())
     assert out.path.exists() and out.record["pipeline"]["note"].startswith("default")
     with pytest.raises(RecordExistsError):
         predict_race(2026, "6", "pre", s, records_dir=tmp_path, first_year=2024, now=when)
