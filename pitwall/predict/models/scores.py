@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import numpy as np
 import pandas as pd
 
-from .base import design_matrix
+from .base import design_matrix, standardise
 from .logistic import LogisticModel
 from .neural import NeuralRanker
 from .strength_model import StrengthModel
@@ -42,7 +42,7 @@ class LinearScores:
 
     def scores(self, race: pd.DataFrame) -> Scores:
         m = self.model
-        score = m.scaler_.transform(design_matrix(race, m.features_)) @ m.weights_
+        score = standardise(m.scaler_, design_matrix(race, m.features_)) @ m.weights_
         return score, np.zeros(len(score))
 
     def training_scores(self, train: pd.DataFrame) -> Scores:
@@ -67,7 +67,7 @@ class StrengthScores:
         if m.pure:
             return (m.scale_ * -rows["pace_pred"].to_numpy(float),
                     m.scale_ * rows["pace_sd"].to_numpy(float))
-        z = m.scaler_.transform(design_matrix(rows, m.features_))
+        z = standardise(m.scaler_, design_matrix(rows, m.features_))
         return z @ m.weights_, m._score_sd(rows)
 
 

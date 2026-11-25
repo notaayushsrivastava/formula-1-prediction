@@ -379,7 +379,7 @@ FORBIDDEN = ["PITWALL_F1TV_TOKEN", "livetiming.formula1.com", "odds-api", "the-o
 
 
 @pytest.mark.parametrize("name", ["tests.yml", "predict.yml", "train.yml", "score.yml",
-                                  "race-report.yml"])
+                                  "race-report.yml", "diagnose.yml"])
 def test_workflows_parse_and_stay_free(name):
     yaml = pytest.importorskip("yaml")
     text = (WORKFLOWS / name).read_text()
@@ -393,7 +393,7 @@ def test_workflows_parse_and_stay_free(name):
         assert word.lower() not in lowered, f"{name} mentions {word}"
     secrets = [part.split("}}")[0] for part in text.split("secrets.")[1:]]
     assert all(s.strip() == "GITHUB_TOKEN" for s in secrets)
-    if name != "tests.yml":
+    if name not in ("tests.yml", "diagnose.yml"):
         assert "workflow_dispatch" in triggers and "concurrency" in data
         writers = [j for j in data["jobs"].values()
                    if j.get("permissions", {}).get("contents") == "write"]

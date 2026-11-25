@@ -1,0 +1,60 @@
+# A before/after check of a model fix on the real data: builds the dataset with the
+# code on 'main' (before) and with this branch (after), backtests a past season with
+# the fast models, and commits reports/diagnose_quali.md back to this branch.
+# Runs on a push to a diag/... branch, or by hand.
+name: diagnose
+
+on:
+  push:
+    branches: ["diag/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pitwall-diagnose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write      # commits the report to this (diag) branch only
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Restore the download cache (read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.pitwall_cache
+          key: pitwall-${{ github.run_id }}
+          restore-keys: pitwall-
+      - name: Install this branch
+        run: pip install -e ".[ml]" tabulate
+      - name: Build the dataset with this branch's code (after)
+        run: pitwall-f1 dataset build --from 2018 --out /tmp/new.parquet
+      - name: Build the dataset with main's code (before)
+        run: |
+          git worktree add /tmp/main-code origin/main
+          python -m venv /tmp/before
+          /tmp/before/bin/pip install -q -e "/tmp/main-code[ml]"
+          /tmp/before/bin/pitwall-f1 dataset build --from 2018 --out /tmp/old.parquet
+      - name: Compare
+        run: python examples/diagnose_quali.py --old /tmp/old.parquet --new /tmp/new.parquet --season 2025
+      - name: Commit the report to this branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/diagnose_quali.md
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Diagnostic report ($(date -u +%Y-%m-%dT%H:%MZ))"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

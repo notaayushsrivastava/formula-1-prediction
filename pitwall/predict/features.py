@@ -115,22 +115,61 @@ def era_table(races: pd.DataFrame) -> pd.DataFrame:
     return out[["RaceId", "era", "races_since_era_start"]]
 
 
+QUALI_GAP_CAP = 5.0      # % behind; beyond this a gap is noise (wet lap, no lap, red flag)
+TEAMMATE_GAP_CAP = 3.0   # % either way
+ROBUST_QUALI = True      # False = the Phase 7 formula (kept for the before/after diagnostic)
+
+
 def add_quali_features(df: pd.DataFrame) -> pd.DataFrame:
     """Grid and qualifying pace (known after qualifying, so 'quali' moment only).
+
+    The gap is measured inside one session: each driver against the fastest lap of the
+    deepest session he set a time in (Q3, else Q2, else Q1), so a dry Q1 lap is never
+    compared with a wet Q3 lap. It is then made monotone in qualifying order (nobody
+    looks faster than a driver who out-qualified him) and capped at QUALI_GAP_CAP.
 
     Also stores QualiGapObs: the raw gap (NaN without a time), an OBSERVATION that
     models may learn from in PAST races at every moment, never in the race predicted.
     """
     out = df.copy()
-    best = out[Q_COLUMNS].min(axis=1)
-    pole = best.groupby(out["RaceId"]).transform("min")
-    gap = (best / pole - 1) * 100
+    gap = session_gaps(out) if ROBUST_QUALI else _phase7_gaps(out)
     out["QualiGapObs"] = gap
-    out["quali_gap_pct"] = gap.fillna(gap.groupby(out["RaceId"]).transform("max"))
-    out["teammate_quali_gap_pct"] = teammate_gaps(out)
+    filled = gap.fillna(gap.groupby(out["RaceId"]).transform("max"))
+    teammate = teammate_gaps(out)
+    if ROBUST_QUALI:
+        filled = filled.clip(0.0, QUALI_GAP_CAP)
+        teammate = teammate.clip(-TEAMMATE_GAP_CAP, TEAMMATE_GAP_CAP)
+    out["quali_gap_pct"] = filled
+    out["teammate_quali_gap_pct"] = teammate
     out["grid"] = out["Grid"]
     out["pit_lane_start"] = out["PitLaneStart"]
     return out
+
+
+def session_gaps(df: pd.DataFrame) -> pd.Series:
+    """Gap (%) to the fastest lap of the deepest session each driver set a time in,
+    made monotone in qualifying order. NaN for a driver with no time at all."""
+    gap = pd.Series(np.nan, index=df.index)
+    for column in Q_COLUMNS:  # Q1, Q2, Q3: a deeper session overrides an earlier one
+        times = pd.to_numeric(df[column], errors="coerce").where(lambda t: t > 0)
+        fastest = times.groupby(df["RaceId"]).transform("min")
+        session = (times / fastest - 1) * 100
+        gap = session.where(session.notna(), gap)
+    if "QualiPosition" in df:
+        order = pd.to_numeric(df["QualiPosition"], errors="coerce")
+        ranked = pd.DataFrame({"RaceId": df["RaceId"], "order": order, "gap": gap})
+        ranked = ranked.sort_values(["RaceId", "order"], na_position="last")
+        known = ranked["gap"].notna() & ranked["order"].notna()
+        monotone = ranked.loc[known].groupby("RaceId")["gap"].cummax()
+        gap.loc[monotone.index] = monotone
+    return gap
+
+
+def _phase7_gaps(df: pd.DataFrame) -> pd.Series:
+    """The original formula: best lap of ANY session vs the best lap of the day."""
+    best = df[Q_COLUMNS].min(axis=1)
+    pole = best.groupby(df["RaceId"]).transform("min")
+    return (best / pole - 1) * 100
 
 
 def teammate_gaps(df: pd.DataFrame) -> pd.Series:
