@@ -30,6 +30,7 @@ from .._optional import require
 from ..strength import StrengthParams
 from ..strength_features import STRENGTH_FEATURES, StrengthFeatures
 from .base import (
+    Z_CLIP,
     N_SIMS, design_matrix, features_of, finish_tensor, fit_scale, moment_of, predict_from_scores,
 )
 
@@ -372,6 +373,8 @@ class NeuralRanker:
     def _batch(self, torch: Any, rows: pd.DataFrame, labels: bool = True) -> Batch:
         """Standardised features, ids, finishing order and DNF labels as tensors."""
         x = (design_matrix(rows, self.features_) - self.mean_) / self.std_
+        if Z_CLIP is not None:
+            x = np.clip(x, -Z_CLIP, Z_CLIP)
         finish = rows["Finish"].to_numpy(float) if labels else np.full(len(rows), np.nan)
         tensor, mask = finish_tensor(np.arange(len(rows)), rows["RaceId"].to_numpy(), finish)
         dnf = rows["DNF"].to_numpy(float) if labels else np.zeros(len(rows))

@@ -21,6 +21,7 @@ from scipy import optimize
 
 from .._optional import require
 from .base import (
+    standardise,
     N_SIMS, design_matrix, features_of, finish_tensor, fit_binary, moment_of,
     pl_loglik_and_grad, predict_from_scores,
 )
@@ -73,7 +74,7 @@ class LogisticModel:
         self.features_ = features_of(train)
         raw = design_matrix(train, self.features_)
         self.scaler_ = preprocessing.StandardScaler().fit(raw)
-        z = self.scaler_.transform(raw)
+        z = standardise(self.scaler_, raw)
         self.weights_ = fit_linear_plackett_luce(
             z, train["RaceId"].to_numpy(), train["Finish"].to_numpy(float), self.l2)
         dnf_model = linear.LogisticRegression(C=self.dnf_c, max_iter=2000)
@@ -84,7 +85,7 @@ class LogisticModel:
         """Probabilities for one race of the moment the model was fitted on."""
         if moment_of(race) != self.moment_:
             raise ValueError(f"{self.name} was fitted on '{self.moment_}' rows.")
-        z = self.scaler_.transform(design_matrix(race, self.features_))
+        z = standardise(self.scaler_, design_matrix(race, self.features_))
         p_dnf = self.dnf_.predict_proba(z)[:, 1]
         return predict_from_scores(race, z @ self.weights_, p_dnf, 1.0, self.n_sims, self.seed)
 

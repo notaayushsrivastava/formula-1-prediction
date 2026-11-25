@@ -60,9 +60,20 @@ def features_of(rows: pd.DataFrame) -> list[str]:
     return feature_columns(moment_of(rows))
 
 
+Z_CLIP: float | None = 5.0  # standardised inputs are clipped to +-Z_CLIP (None = off)
+
+
 def design_matrix(rows: pd.DataFrame, features: list[str]) -> np.ndarray:
-    """Feature values as a float array (any leftover NaN becomes 0)."""
-    return np.nan_to_num(rows[features].to_numpy(float), nan=0.0)
+    """Feature values as a float array (leftover NaN and +-inf become 0, never a huge
+    number: np.nan_to_num would otherwise turn inf into 1.8e308)."""
+    return np.nan_to_num(rows[features].to_numpy(float), nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def standardise(scaler: Any, raw: np.ndarray) -> np.ndarray:
+    """scaler.transform, then clipped to +-Z_CLIP standard deviations: one extreme input
+    (a wet-qualifying gap, a pit-lane start) cannot push a linear model to 0% or 100%."""
+    z = np.asarray(scaler.transform(raw), float)
+    return z if Z_CLIP is None else np.clip(z, -Z_CLIP, Z_CLIP)
 
 
 # ---------- scores -> probabilities ----------

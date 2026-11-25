@@ -21,6 +21,7 @@ from .._optional import require
 from ..strength import StrengthParams
 from ..strength_features import STRENGTH_FEATURES, StrengthFeatures
 from .base import (
+    standardise,
     N_SIMS, design_matrix, features_of, fit_binary, fit_scale, moment_of, predict_from_scores,
 )
 from .logistic import fit_linear_plackett_luce
@@ -65,7 +66,7 @@ class StrengthModel:
         self.features_ = features_of(train) + ([] if self.pure else STRENGTH_FEATURES)
         raw = design_matrix(rows, self.features_)
         self.scaler_ = preprocessing.StandardScaler().fit(raw)
-        z = self.scaler_.transform(raw)
+        z = standardise(self.scaler_, raw)
         races, finish = rows["RaceId"].to_numpy(), rows["Finish"].to_numpy(float)
         if self.pure:
             self.weights_ = np.zeros(0)
@@ -82,7 +83,7 @@ class StrengthModel:
         if moment_of(race) != self.moment_:
             raise ValueError(f"{self.name} was fitted on '{self.moment_}' rows.")
         rows = self.strength_features(race)
-        z = self.scaler_.transform(design_matrix(rows, self.features_))
+        z = standardise(self.scaler_, design_matrix(rows, self.features_))
         p_dnf = self.dnf_.predict_proba(z)[:, 1]
         if self.pure:
             scores = -rows["pace_pred"].to_numpy(float)

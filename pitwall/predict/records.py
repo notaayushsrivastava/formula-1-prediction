@@ -34,6 +34,11 @@ SCORE_COLUMNS = ["Stem", "Year", "Round", "Event", "Moment", "Created", "Drivers
                  "PodiumOverlap", "P_win_of_winner"]
 
 
+SURPRISE_P = 0.01   # a result the engine gave less than 1% is flagged as a surprise
+UPSET_WIN_P = 0.05  # a winner the engine gave less than 5% is flagged as an upset
+CHECK_COLUMNS = ["Stem", "Race", "Moment", "Kind", "Driver", "Chance", "Text"]
+
+
 class RecordExistsError(PitwallError):
     """A prediction record for this race and moment already exists (never overwritten)."""
 
@@ -194,6 +199,68 @@ def score_records(records: list[dict[str, Any]], results: pd.DataFrame) -> pd.Da
     return pd.DataFrame(rows, columns=SCORE_COLUMNS)
 
 
+def check_record(record: dict[str, Any], results: pd.DataFrame) -> list[dict[str, Any]]:
+    """After a race: surprises (results the engine gave < SURPRISE_P), upsets (a winner
+    under UPSET_WIN_P) and data problems (drivers raced but not predicted, or predicted
+    but not starting). results: this race's rows with DriverId, Driver, Finish, Win.
+
+    A surprise is not automatically an error: about 1 driver-result in 100 should land
+    there by chance. Many more than that means the model is missing something.
+    """
+    if results.empty:
+        return []
+    stem = record.get("_stem", record_stem(record["year"], record["round"], record["moment"]))
+    base = {"Stem": stem, "Race": f"{record['year']} {record['event']}",
+            "Moment": record["moment"]}
+    pred = record_frame(record)
+    out: list[dict[str, Any]] = []
+    codes = dict(zip(results["DriverId"], results.get("Driver", results["DriverId"])))
+    for driver in sorted(set(results["DriverId"]) - set(pred["DriverId"])):
+        out.append({**base, "Kind": "data", "Driver": codes.get(driver, driver),
+                    "Chance": float("nan"),
+                    "Text": "raced but was not in the prediction (new or replacement "
+                            "driver: check the entry list)"})
+    for driver in sorted(set(pred["DriverId"]) - set(results["DriverId"])):
+        name = pred.loc[pred["DriverId"] == driver, "Driver"].iloc[0]
+        out.append({**base, "Kind": "data", "Driver": name, "Chance": float("nan"),
+                    "Text": "was predicted but did not start (withdrawn, injured or replaced)"})
+    merged = pred.merge(results.drop(columns=["Driver"], errors="ignore"), on="DriverId")
+    columns = [c for c in pred.columns if c.startswith(POSITION_PREFIX)]
+    for row in merged.itertuples(index=False):
+        values = row._asdict()
+        finish = values.get("Finish")
+        if finish is None or pd.isna(finish):
+            continue
+        k = min(int(finish), len(columns))
+        chance = float(sum(values[c] for c in columns[:k]))
+        if chance < SURPRISE_P:
+            out.append({**base, "Kind": "surprise", "Driver": values["Driver"],
+                        "Chance": chance,
+                        "Text": f"finished P{int(finish)}; the engine gave {chance:.2%} for "
+                                f"P{int(finish)} or better"})
+        if values.get("Win") == 1 and values["P_win"] < UPSET_WIN_P:
+            out.append({**base, "Kind": "upset", "Driver": values["Driver"],
+                        "Chance": float(values["P_win"]),
+                        "Text": f"won with only {values['P_win']:.1%} to win"})
+    return out
+
+
+def check_records(records: list[dict[str, Any]], results: pd.DataFrame) -> pd.DataFrame:
+    """check_record for every record whose race has results (results needs Year, Round)."""
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        race = results[(results["Year"] == record["year"]) & (results["Round"] == record["round"])]
+        rows += check_record(record, race)
+    return pd.DataFrame(rows, columns=CHECK_COLUMNS)
+
+
+def expected_surprises(graded: pd.DataFrame) -> float:
+    """How many surprises chance alone would give: about SURPRISE_P per classified row."""
+    if graded.empty or "Finish" not in graded:
+        return 0.0
+    return float(graded["Finish"].notna().sum() * SURPRISE_P)
+
+
 def graded_rows(records: list[dict[str, Any]], results: pd.DataFrame) -> pd.DataFrame:
     """Every (record, driver) row with its outcome, for calibration tables."""
     parts = []
@@ -210,7 +277,8 @@ def graded_rows(records: list[dict[str, Any]], results: pd.DataFrame) -> pd.Data
 
 def write_track_record(scores: pd.DataFrame, graded: pd.DataFrame,
                        path: Path | str = TRACK_RECORD_PATH,
-                       pending: list[str] | None = None) -> Path:
+                       pending: list[str] | None = None,
+                       checks: pd.DataFrame | None = None) -> Path:
     """reports/track_record.md: every scored prediction, running averages vs targets."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -256,11 +324,38 @@ def write_track_record(scores: pd.DataFrame, graded: pd.DataFrame,
             lines += [f"| {r.Predicted:.3f} | {r.Observed:.3f} | {int(r.Count)} |"
                       for r in table.itertuples(index=False)]
             lines += [""]
+    if checks is not None and not scores.empty:
+        lines += _check_lines(checks, graded)
     if pending:
         lines += ["## Waiting for results", "", *[f"- {p}" for p in pending], ""]
     lines += ["_Educational project, not betting advice. Not affiliated with Formula 1._", ""]
     target.write_text("\n".join(lines), encoding="utf-8")
     return target
+
+
+def _check_lines(checks: pd.DataFrame, graded: pd.DataFrame) -> list[str]:
+    """The 'Surprises and data checks' section."""
+    surprises = int((checks["Kind"] == "surprise").sum())
+    expected = expected_surprises(graded)
+    lines = ["## Surprises and data checks", "",
+             f"A surprise is a result the engine gave under {SURPRISE_P:.0%} (e.g. a rookie on "
+             f"the podium in a slow car). By chance alone about {expected:.1f} are expected "
+             f"so far; observed: {surprises}."]
+    if surprises > max(3.0, 3 * expected):
+        lines.append("**Warning: far more surprises than chance allows. The model is "
+                     "probably missing something (a new driver, an upgrade, a rule change); "
+                     "investigate before trusting the next predictions.**")
+    data = checks[checks["Kind"] == "data"]
+    if not data.empty:
+        lines.append(f"**{len(data)} data problem(s)** (entry list mismatches) are listed "
+                     "below: these are errors in the inputs, not bad luck.")
+    lines.append("")
+    if checks.empty:
+        return lines + ["_No surprises or data problems._", ""]
+    lines += ["| Race | Moment | Kind | Driver | What happened |", "|---|---|---|---|---|"]
+    for row in checks.itertuples(index=False):
+        lines.append(f"| {row.Race} | {row.Moment} | {row.Kind} | {row.Driver} | {row.Text} |")
+    return lines + [""]
 
 
 def _nan(value: float) -> str:

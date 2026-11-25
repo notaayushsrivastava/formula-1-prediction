@@ -139,8 +139,36 @@ def report_context(record: dict[str, Any], live: LiveRows, race: dict[str, Any],
     scores = _safe(lambda: _scores(sources, records_dir, clock), pd.DataFrame())
     context["track"] = track_rows(scores)
     context["fig_track"] = add(_safe(lambda: figures.track_record(scores, folder), None))
+    context["market"] = _safe(lambda: market_section(record), {"rows": []})
     context["licences"] = LICENCES
     return context, figs
+
+
+def market_section(record: dict[str, Any]) -> dict[str, Any]:
+    """Engine vs market for this prediction: from its paper ticket if one was made, else
+    from hand-typed prices (data/markets). Empty when there are no prices."""
+    from ..market import ManualCsvSource, Roster, market_snapshot, race_table
+    from ..market.paper import ticket_path
+
+    stem = record.get("_stem") or record_stem(record["year"], record["round"],
+                                              record["moment"])
+    path = ticket_path(stem)
+    if path.exists():
+        table = pd.DataFrame(json.loads(path.read_text(encoding="utf-8"))["market_table"])
+    else:
+        prices = ManualCsvSource().get_prices(int(record["year"]), int(record["round"]),
+                                              Roster.from_record(record))
+        if prices.empty:
+            return {"rows": []}
+        table = race_table(record_frame(record),
+                           market_snapshot(prices, "win", record["created_utc"]))
+    if table.empty:
+        return {"rows": []}
+    top = table.sort_values("p_engine", ascending=False).head(8)
+    rows = [{"driver": r.Driver, "engine": r.p_engine, "market": r.p_market,
+             "edge": f"{100 * r.edge:+.1f}", "odds": f"{r.best_odds:.2f}"}
+            for r in top.itertuples(index=False)]
+    return {"rows": rows, "source": ", ".join(sorted(set(map(str, table["best_source"]))))}
 
 
 def _safe(make: Callable[[], Any], fallback: Any) -> Any:

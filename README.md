@@ -123,8 +123,12 @@ print(format_prediction(out.prediction, out.teams))
 | | Win log loss | Podium log loss |
 |---|---|---|
 | Target (best open-source model found) | 0.075 | 0.191 |
-| pitwall backtest 2025 | not run yet — see `reports/backtest.md` after the first `train` workflow | |
+| pitwall backtest 2024–25, after qualifying (best: the grid baseline) | 0.111 | 0.224 |
+| pitwall backtest 2024–25, before the weekend (best: B1 logistic) | 0.144 | 0.278 |
 | Live 2026 forward test | see [track record](reports/track_record.md) | |
+
+Honest reading: nothing reaches the targets yet, and after qualifying no model beats the
+starting grid on its own (details and the Phase 14 fixes in `reports/diagnose_quali.md`).
 
 The 2026 season is a **locked final test**: tuning happens on 2018–2025 only. After Abu Dhabi (6 December 2026), `pitwall-f1 final-2026 --i-understand-this-is-final` runs the frozen pipeline once and writes `reports/final_2026.md` and `reports/FINAL_RUN.json`; a second run needs `--force` and is labelled "RE-RUN — not a clean final test".
 
@@ -138,6 +142,28 @@ The 2026 season is a **locked final test**: tuning happens on 2018–2025 only. 
 | `score` | Mon 06:00, manual | grades finished races, updates the track record |
 
 Cron jobs can start late; every job is safe to rerun. Data and models are never committed (`.gitignore`); the download cache lives in the Actions cache. To switch on: **Settings → Actions → General → Workflow permissions: Read and write**, and **Settings → Pages → Deploy from a branch: `main` / `docs`**.
+
+## The engine vs the market (Phase 14, paper trading only)
+
+**No real money, ever.** Real-money online betting is illegal in India and this is an
+educational project. Phase 14 asks one honest question: *do the engine's odds contain
+information that market prices do not?*
+
+```bash
+pitwall-f1 market template 2026 Abu          # a CSV to type PUBLIC prices into
+pitwall-f1 market check 2026 Abu --moment quali   # margin, engine vs market, edge
+pitwall-f1 paper trade 2026 Abu --moment quali    # pretend quarter-Kelly stakes
+pitwall-f1 paper settle && pitwall-f1 paper report   # after the race -> reports/market.md
+```
+
+- Prices: typed in by hand from public pages (`data/markets/`), or Polymarket's public,
+  key-free price history for an event you name. Only prices seen **before** a prediction
+  are ever compared with it.
+- Maths: the bookmaker's margin removed four ways (multiplicative, additive, power,
+  Shin); Kelly staking, exact for a whole race (Smoczynski–Tomkins), used at a quarter
+  with caps; Benter's two-stage model to test whether the engine adds information.
+- Results: profit (pretend), ROI with a bootstrap interval, closing line value,
+  drawdown, risk of ruin, and how many races until the result means anything.
 
 ## Command line
 

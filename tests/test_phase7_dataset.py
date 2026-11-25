@@ -239,7 +239,9 @@ def test_forecast_lead_matches_the_moment(data):
 def test_quali_gaps(data):
     assert _row(data, 3, "AAA")["teammate_quali_gap_pct"] == pytest.approx(
         (80.5 / 81.0 - 1) * 100)  # compared in Q2: BBB has no Q3 time
-    assert _row(data, 3, "BBB")["quali_gap_pct"] == pytest.approx(0.9 / 80.0 * 100)
+    # Phase 14: measured inside BBB's deepest session (Q2: 81.0 vs the Q2 best 80.5)
+    assert _row(data, 3, "BBB")["quali_gap_pct"] == pytest.approx((81.0 / 80.5 - 1) * 100)
+    assert _row(data, 3, "AAA")["quali_gap_pct"] == pytest.approx(0.0)
 
 
 def test_adding_a_later_race_changes_nothing_earlier():
