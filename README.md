@@ -8,7 +8,7 @@ Before every race weekend it publishes win, podium, points and DNF probabilities
 
 > Educational project, **not betting advice**. Not affiliated with Formula 1. F1, FORMULA ONE and related marks are trademarks of Formula One Licensing B.V.
 
-**Links:** [predictions site](https://thanmayroobanathans.github.io/formula-1-prediction/) · [track record](reports/track_record.md) · [backtest report](reports/backtest.md) · [changelog](CHANGELOG.md)
+**Links:** [predictions site](https://thanmayroobanathans.github.io/formula-1-prediction/) · [track record](reports/track_record.md) · [backtest report](reports/backtest.md) · [validation report](reports/validation.md) · [methods](docs/methods.md) · [contributing](CONTRIBUTING.md) · [changelog](CHANGELOG.md)
 
 ## What it does
 
@@ -138,10 +138,41 @@ The 2026 season is a **locked final test**: tuning happens on 2018–2025 only. 
 | `tests` | every push | ruff + pytest on Python 3.11–3.13 (CPU torch), LaTeX compile check, mypy |
 | `predict` | Thu 12:00 (pre), Fri 22:00 (practice), Sat 22:00 (quali), manual | predicts the next race, commits the record + site |
 | `race-report` | Fri 06:00 (pre), Sat 22:00 (quali), manual | builds the PDF, publishes it as a GitHub Release and on the site |
-| `train` | Tue 03:17, manual | dataset, 10 M2 seeds as a job matrix, backtest of every model; commits `reports/` only |
+| `train` | Tue 03:17, manual | dataset, 10 M2 seeds as a job matrix, backtest of every model, validation (CPCV, one job per moment); commits `reports/` only |
 | `score` | Mon 06:00, manual | grades finished races, updates the track record |
 
 Cron jobs can start late; every job is safe to rerun. Data and models are never committed (`.gitignore`); the download cache lives in the Actions cache. To switch on: **Settings → Actions → General → Workflow permissions: Read and write**, and **Settings → Pages → Deploy from a branch: `main` / `docs`**.
+
+## Validation: not fooling ourselves (Phase 15)
+
+With about 48 test races, a dozen models and many settings, some "improvements" are pure
+luck. Phase 15 measures that luck, and every later phase must pass its gate.
+
+```bash
+pitwall-f1 validate                          # walk-forward + CPCV (B0, B1, M1, B2), embargo 0/1/3/10,
+                                             # B0+B1 / B0+M1 pools after qualifying -> reports/validation.md
+pitwall-f1 validate --moments quali --sensitivity      # one moment, no extra embargoes
+pitwall-f1 validate --include-m2 --m2-seeds 1          # also M2 (slow)
+pitwall-f1 validate --report-only                      # rebuild the report from the log
+pitwall-f1 gate "POOL-log B0+B1" "B0 grid slot" --moment quali   # from logged losses, no retraining
+```
+
+- **Walk-forward** (2024-2025, only earlier races) stays the primary test.
+- **CPCV**: 2018-2025 cut into 8 time blocks, every pair of blocks as the test set (28
+  splits), the races just after each test block removed from training (embargo:
+  rolling-form features carry their results), stitched into 7 complete backtests. Each
+  model gets a spread of 7 scores instead of one number.
+- **Statistics**: paired and block bootstraps, Diebold-Mariano (HLN), the deflated score
+  ("the best of 30 random tries looks good by luck"), PBO, Benjamini-Hochberg. Maths in
+  [docs/methods.md](docs/methods.md).
+- **gate_v2** keeps a change only if its 95% bootstrap interval on 2025 is below zero
+  (win and podium), its deflated p < 0.05 once the family has >= 10 trials, and its median
+  CPCV path beats the incumbent. Every experiment and its per-race losses are logged in
+  `reports/experiments.csv` and `reports/experiments/`.
+- Run times (2-core laptop-class CPU, f1db data): walk-forward of the four fast models
+  about 5 min per moment; one CPCV run (28 splits, four models) about 4-7 min, M1 being
+  most of it; the four CPCV pools after qualifying about 25 min. In GitHub Actions the
+  validation runs as one job per moment.
 
 ## The engine vs the market (Phase 14, paper trading only)
 
@@ -176,6 +207,7 @@ pitwall-f1 odds 2026 --sims 50000
 pitwall-f1 token          # checks your token without printing it
 pitwall-f1 cache-clear
 pitwall-f1 next | predict | report | backtest | dataset build | score | final-2026   # see above
+pitwall-f1 validate | gate                                                           # Phase 15
 ```
 
 Exit codes: 0 done (or nothing to do with `--skip-if-*`), 1 error, 2 bad arguments, 3 data not available yet.
@@ -216,11 +248,14 @@ pitwall/
 ├── sources/           Jolpica client, Live Timing client, feed parsers
 ├── analysis/          degradation, bootstrap, Monte Carlo
 ├── predict/           dataset, models, backtest, ensemble, calibration, pipeline,
-│                      live.py (top-up + live rows), records.py, service.py, final.py
+│                      live.py (top-up + live rows), records.py, service.py, final.py,
+│                      validation.py (CPCV), significance.py, experiments.py (log v2)
 ├── report/            LaTeX race preview (template, figures, LuaLaTeX build)
 └── plotting/          colours, lap/race/qualifying/season/analysis/telemetry/prediction plots
 predictions/           one JSON per live prediction (committed = timestamped proof)
-reports/               backtest.md, experiments.csv, track_record.md, final_config.json
+reports/               backtest.md, validation.md, experiments.csv (+ experiments/ per-race losses),
+                       track_record.md, final_config.json
+lab/                   ideas that failed the gate, with a write-up of why
 docs/                  the GitHub Pages site
 ```
 

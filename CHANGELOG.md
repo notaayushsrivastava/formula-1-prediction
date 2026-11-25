@@ -1,5 +1,43 @@
 # Changelog
 
+## 2.2.0.dev15 — Phase 15: the validation upgrade
+Goal: make it hard to fool ourselves. Every later phase's gate uses this.
+- `predict/validation.py`: combinatorial purged cross-validation for races (2018-2025,
+  never 2026): N = 8 time blocks, k = 2 test blocks -> 28 splits, embargo of e race
+  weekends after each test block (default 1; 0, 3 and 10 also run), purge guard,
+  assembly into 7 full backtest paths (López de Prado ch. 12), `check_split` raises
+  `LeakageError` for any training race inside a test block or its embargo.
+- `predict/significance.py`: circular block bootstrap (3 races), one-sided bootstrap
+  p-value, Diebold-Mariano with the Harvey-Leybourne-Newbold correction, the deflated
+  score (Deflated Sharpe Ratio on per-race improvement), PBO by combinatorially
+  symmetric CV, Benjamini-Hochberg.
+- `predict/experiments.py`: experiment log v2 (`experiment_id`, `family`, `params_hash`,
+  `phase`, `validation`, `embargo`, `cpcv_blocks`, `cpcv_test_blocks`, `data_hash`), old
+  rows stay readable, per-race losses in `reports/experiments/<id>.csv`, trial counting,
+  log merging for parallel CI jobs. Content-based ids: re-running an identical
+  experiment adds no row.
+- `backtest.gate_v2` -> `GateDecision` (bootstrap CI on 2025 for win AND podium,
+  deflated p < 0.05 once >= 10 trials, CPCV median path; DM + block bootstrap as
+  context; reasons for every check). The old `gate()` is unchanged. `load_evidence`
+  reads logged losses (no retraining).
+- `ensemble.PooledModel` (pool as a RaceModel for CPCV, weights from inner
+  out-of-fold predictions of the training races only), `pool_forward`, `pool_name`.
+- `predict/validation_report.py` + `plotting/validation_plots.py`:
+  `reports/validation.md` with CPCV box plots and the embargo plot, gates, trials, PBO,
+  FDR, the front-of-grid diagnosis (Plackett-Luce stage temperatures).
+- CLI: `pitwall-f1 validate [...] [--report-only] [--merge LOG...]`,
+  `pitwall-f1 gate CANDIDATE INCUMBENT --moment M`.
+- `train.yml`: `validate` matrix (one job per moment, fast models) after the dataset
+  job, `validate-report` merges and commits `reports/` only. `.gitattributes`:
+  union merge for `reports/experiments.csv`.
+- Fix: M1/M2 strength features forecast a race dated before the end of the training
+  data from a filter run only over the earlier training races (needed for CPCV;
+  walk-forward unchanged). Test: `test_strength_features_forecast_past_races_from_the_past_only`.
+- `CONTRIBUTING.md` (rules for phases 15-30), `docs/methods.md` (all the maths), LaTeX
+  appendix paragraph. Coverage floor raised to 90%. `tests/test_phase15.py` (31 tests).
+- Result (first use of the gate): see `reports/validation.md` and `lab/phase15_pools.md`.
+  `reports/final_config.json` is NOT changed.
+
 ## 2.1.0.dev14 — Phase 14: quant analysis (paper trading only)
 ### Step 0: the after-qualifying problem (found on the real data)
 The first backtest had every model losing to the plain grid after qualifying, with

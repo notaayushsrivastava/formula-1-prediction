@@ -214,6 +214,8 @@ No live prediction has been graded yet. Every prediction is saved before the rac
 
 \textbf{Testing.} Walk-forward backtests on 2024--2025 (every race predicted using only earlier races). The 2026 season is a locked final test, evaluated once after the last race. Targets: \VAR{targets.win_logloss} (win) and \VAR{targets.podium_logloss} (podium) log loss, the best open-source model found.
 
+\textbf{Not fooling ourselves.} A change is kept only if it is better on 2025 with a 95\% race-level bootstrap interval below zero, still better after a ``deflated'' correction for how many settings were tried (the best of 30 random tries looks good by luck), and better on the median of 7 combinatorial cross-validation paths over 2018--2025 (with races just after each test block left out, because form features carry their results). The maths is in \texttt{docs/methods.md} in the repository.
+
 \textbf{Limits.} FIA grid penalties announced after qualifying are not parsed; driver mood, upgrades and team orders are invisible to the model; one race is a very small sample.}
 
 \sectionline{Sources and licences}

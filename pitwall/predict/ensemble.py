@@ -3,11 +3,16 @@
 Methods: 'equal' (the hard-to-beat baseline), 'linear' (weighted average of the
 position matrices), 'log' (weighted geometric mean, then Sinkhorn). Weights live on the
 simplex (softmax), fitted by position log loss with a small pull toward equal weights.
+
+Phase 15: `pool_forward` names a walk-forward pool ('POOL-log B0+B1'), and `PooledModel`
+is the same pool as a RaceModel for CPCV, where "earlier races" do not exist: its
+weights are fitted on inner out-of-fold predictions of the TRAINING races only.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -15,11 +20,12 @@ from scipy import optimize
 from scipy.special import logsumexp, softmax
 
 from .backtest import (
-    BacktestResult, LeakageError, check_lock, compare_to_baseline, git_hash, summarise_by_model,
+    BacktestResult, LeakageError, _with_labels, check_lock, compare_to_baseline, git_hash,
+    strip_outcomes, summarise_by_model,
 )
 from .dataset import LABELS
 from .metrics import BENCHMARKS
-from .models.base import position_matrix, prediction_frame, sinkhorn
+from .models.base import RaceModel, moment_of, position_matrix, prediction_frame, sinkhorn
 from .report import markdown_table
 
 METHODS = ("equal", "linear", "log")
@@ -182,6 +188,111 @@ def choice_section(choices: dict[str, str], summary: pd.DataFrame) -> list[str]:
             parts.append(f"{label} LL {row[key]:.4f} {word} the {BENCHMARKS[key]} target")
         lines.append(f"- **{moment}**: {name} — " + "; ".join(parts) + ".")
     return lines + [""]
+
+
+# ---------- Phase 15: named pools ----------
+INNER_FOLDS = 3
+INNER_EMBARGO = 1
+
+
+def short_name(model: str) -> str:
+    """'B1 logistic' -> 'B1', 'M1-pure strength' -> 'M1-pure'."""
+    return model.split()[0]
+
+
+def pool_name(members: Sequence[str], method: str, l2: float = L2_TO_EQUAL) -> str:
+    """'POOL-log B0+B1' (the l2 is added when it is not the default)."""
+    name = f"POOL-{method} " + "+".join(short_name(m) for m in members)
+    return name if l2 == L2_TO_EQUAL else f"{name} (l2={l2:g})"
+
+
+def pool_params(members: Sequence[str], method: str, l2: float) -> dict[str, Any]:
+    """The configuration of a pool, identical for walk-forward and CPCV (one trial)."""
+    return {"members": list(members), "method": method, "l2": float(l2)}
+
+
+def pool_forward(preds: pd.DataFrame, moment: str, members: Sequence[str], method: str,
+                 eval_seasons: Iterable[int], warmup_seasons: Iterable[int],
+                 l2: float = L2_TO_EQUAL,
+                 min_train_races: int = MIN_TRAIN_RACES) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """stack_forward for a chosen set of members, renamed to pool_name(...)."""
+    table, history = stack_forward(preds, moment, eval_seasons, warmup_seasons, method, l2,
+                                   min_train_races, members)
+    if not table.empty:
+        table["Model"] = pool_name(members, method, l2)
+    return table, history
+
+
+class PooledModel:
+    """A pool of member models as one RaceModel (for CPCV).
+
+    fit(train): the training races are cut into `inner_folds` consecutive folds; for each
+    fold the members are fitted on the other training races (minus `inner_embargo` races
+    after the fold) and predict the fold. The pool weights are fitted on those inner
+    out-of-fold predictions, then the members are refitted on all training races.
+    Nothing outside `train` is ever used.
+    """
+
+    def __init__(self, factories: Sequence[Callable[[], RaceModel]], method: str = "linear",
+                 l2: float = L2_TO_EQUAL, inner_folds: int = INNER_FOLDS,
+                 inner_embargo: int = INNER_EMBARGO,
+                 cache: dict[tuple[str, str, int], RaceModel] | None = None) -> None:
+        if method not in ("linear", "log", "equal"):
+            raise ValueError(f"Unknown method {method!r}.")
+        self.factories = list(factories)
+        self.members = [f().name for f in self.factories]
+        self.method, self.l2 = method, l2
+        self.inner_folds, self.inner_embargo = inner_folds, inner_embargo
+        self.cache = cache  # shared between pools: same member + same rows = fitted once
+        self.name = pool_name(self.members, method, l2)
+
+    def params(self) -> dict[str, Any]:
+        """Same configuration dict as the walk-forward pool (counted as one trial)."""
+        return pool_params(self.members, self.method, self.l2)
+
+    def fit(self, train: pd.DataFrame) -> PooledModel:
+        """Inner out-of-fold weights, then members refitted on all of `train`."""
+        moment = moment_of(train)
+        races = (train.drop_duplicates("RaceId").sort_values(["Date", "RaceId"])["RaceId"]
+                 .to_numpy())
+        if len(races) < 2 * self.inner_folds:
+            raise ValueError("Too few training races for the inner folds.")
+        oof = []
+        position = {r: i for i, r in enumerate(races)}
+        for fold in np.array_split(races, self.inner_folds):
+            last = max(position[r] for r in fold)
+            blocked = set(fold) | {r for r in races
+                                   if last < position[r] <= last + self.inner_embargo}
+            fit_rows = train[~train["RaceId"].isin(blocked)]
+            members = [self._fitted(f, fit_rows) for f in self.factories]
+            for race_id in fold:
+                race = train[train["RaceId"] == race_id]
+                for member in members:
+                    oof.append(_with_labels(member.predict(strip_outcomes(race)), race,
+                                            member.name))
+        stacks = build_stacks(pd.concat(oof, ignore_index=True), moment, self.members)
+        self.weights_ = fit_weights(stacks, self.method, self.l2)
+        self.members_ = [self._fitted(f, train) for f in self.factories]
+        return self
+
+    def _fitted(self, factory: Callable[[], RaceModel], rows: pd.DataFrame) -> RaceModel:
+        """A member fitted on `rows`, reused from the shared cache when possible."""
+        if self.cache is None:
+            return factory().fit(rows)
+        model = factory()
+        key = (model.name, moment_of(rows), hash(tuple(sorted(rows["RaceId"].unique()))))
+        if key not in self.cache:
+            self.cache[key] = model.fit(rows)
+        return self.cache[key]
+
+    def predict(self, race: pd.DataFrame) -> pd.DataFrame:
+        """Every member's prediction, pooled with the fitted weights."""
+        n = len(race)
+        preds = [m.predict(race) for m in self.members_]
+        matrices = np.stack([position_matrix(p)[:, :n] for p in preds])
+        dnf = np.stack([p["P_dnf"].to_numpy(float) for p in preds])
+        return prediction_frame(race, pool(matrices, self.weights_, self.method),
+                                self.weights_ @ dnf)
 
 
 def _race_loss(stack: RaceStack, w: np.ndarray, method: str) -> float:
