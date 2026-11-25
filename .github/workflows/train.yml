@@ -1,6 +1,9 @@
 # Weekly retraining and backtest on free CPU runners. The 10 M2 seeds run as a matrix
 # (each its own job), their predictions are uploaded as artifacts, and a final job
 # combines them with the other models, writes the reports and commits ONLY reports/.
+# Phase 15: the validation (walk-forward + CPCV + embargo sensitivity + gates, fast
+# models only) runs as a matrix over the three moments right after the dataset job;
+# a last job merges their logs, writes reports/validation.md and commits reports/.
 # Data and models are never committed (artifacts expire; the cache is not in git).
 name: train
 
@@ -13,6 +16,10 @@ on:
         description: "Fast run (B0, B1, M1 only; no M2 matrix)"
         type: boolean
         default: false
+      validate:
+        description: "Run the Phase 15 validation (CPCV, fast models)"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -124,6 +131,76 @@ jobs:
           git add reports
           if git diff --cached --quiet; then echo "Nothing new to commit."; exit 0; fi
           git commit -m "Weekly backtest ($(date -u +%Y-%m-%d))"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          exit 1
+
+  validate:
+    # One job per moment (CPCV multiplies fits by 28 and runs 4 embargoes): about
+    # 30-40 min for 'pre' and 'practice', about 60-90 min for 'quali' (with the pools).
+    needs: dataset
+    if: ${{ github.event_name == 'schedule' || inputs.validate }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        moment: [pre, practice, quali]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[ml]"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dataset
+          path: artifacts
+      - name: Walk-forward + CPCV for one moment (fast models, no 2026)
+        run: |
+          pitwall-f1 -v validate --moments ${{ matrix.moment }} \
+            --dataset artifacts/dataset.parquet \
+            --log artifacts/validate-${{ matrix.moment }}/experiments.csv --no-report
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validate-${{ matrix.moment }}
+          path: artifacts/validate-${{ matrix.moment }}
+          retention-days: 7
+
+  validate-report:
+    # After the backtest commit (assemble), so the two never push the log at once.
+    needs: [validate, assemble]
+    if: ${{ always() && needs.validate.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write      # commits reports/ only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[ml]"
+      - name: Start from the latest main (the backtest may have committed)
+        run: git pull --rebase
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: validate-*
+          path: artifacts
+      - name: Merge the logs, write reports/validation.md (no training)
+        run: |
+          pitwall-f1 validate --merge artifacts/validate-*/experiments.csv
+      - name: Commit reports (never data or models)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports
+          if git diff --cached --quiet; then echo "Nothing new to commit."; exit 0; fi
+          git commit -m "Weekly validation ($(date -u +%Y-%m-%d))"
           for attempt in 1 2 3; do
             git pull --rebase && git push && exit 0
             sleep 15

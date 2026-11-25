@@ -141,6 +141,46 @@ def build_parser() -> argparse.ArgumentParser:
     paper_sub.add_parser("settle", help="settle tickets whose race has finished")
     paper_sub.add_parser("report", help="write reports/market.md")
 
+    # ----- Phase 15: validation -----
+    validate = sub.add_parser("validate", help="walk-forward + CPCV validation, embargo "
+                                               "sensitivity, gates -> reports/validation.md")
+    validate.add_argument("--models", nargs="+", choices=MODEL_CHOICES, metavar="MODEL",
+                          help="models (default: the fast ones B0, B1, M1, B2)")
+    validate.add_argument("--moments", nargs="+", choices=MOMENT_CHOICES)
+    validate.add_argument("--blocks", type=int, default=8, help="CPCV blocks N (default 8)")
+    validate.add_argument("--test-blocks", type=int, default=2,
+                          help="CPCV test blocks k (default 2: C(8,2) = 28 splits)")
+    validate.add_argument("--embargo", type=int, default=1,
+                          help="race weekends removed after each test block (default 1)")
+    validate.add_argument("--sensitivity", nargs="*", type=int, default=[0, 3, 10],
+                          help="extra embargoes to compare (default 0 3 10; none: skip)")
+    validate.add_argument("--include-m2", action="store_true",
+                          help="also M2 (slow: 1-2 seeds, see --m2-seeds)")
+    validate.add_argument("--m2-seeds", type=int, choices=[1, 2], default=1)
+    validate.add_argument("--no-pools", action="store_true",
+                          help="skip the B0 + B1 / B0 + M1 pools after qualifying")
+    validate.add_argument("--no-walk-forward", action="store_true")
+    validate.add_argument("--report-only", action="store_true",
+                          help="rebuild reports/validation.md from the log (no training)")
+    validate.add_argument("--merge", nargs="+", type=Path, metavar="LOG",
+                          help="merge logs from parallel jobs into --log, then rebuild "
+                               "the report (no training)")
+    validate.add_argument("--no-report", action="store_true")
+    validate.add_argument("--note", default="",
+                          help="a line printed under the report title (e.g. data caveats)")
+    validate.add_argument("--dataset", type=Path, help="Parquet file (default: the cache)")
+    validate.add_argument("--log", type=Path, default=Path("reports/experiments.csv"))
+    validate.add_argument("--report", type=Path, default=Path("reports/validation.md"))
+
+    gate_cmd = sub.add_parser("gate", help="gate_v2 from logged per-race losses "
+                                           "(no retraining)")
+    gate_cmd.add_argument("candidate", help="model name as logged, e.g. 'POOL-log B0+B1'")
+    gate_cmd.add_argument("incumbent", help="e.g. 'B0 grid slot'")
+    gate_cmd.add_argument("--moment", choices=MOMENT_CHOICES, required=True)
+    gate_cmd.add_argument("--embargo", type=int, default=1, help="which CPCV run to use")
+    gate_cmd.add_argument("--season", type=int, default=2025)
+    gate_cmd.add_argument("--log", type=Path, default=Path("reports/experiments.csv"))
+
     report = sub.add_parser("report", help="LaTeX/PDF race preview (needs LuaLaTeX)")
     report.add_argument("year", help="season, or 'next'")
     report.add_argument("event", nargs="?", default="next")
@@ -206,7 +246,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _dispatch(args: argparse.Namespace) -> tuple[str, int]:
     handlers = {"next": _next, "predict": _predict, "backtest": _backtest,
                 "dataset": _dataset, "score": _score, "final-2026": _final,
-                "report": _report, "market": _market, "paper": _paper}
+                "report": _report, "market": _market, "paper": _paper,
+                "validate": _validate, "gate": _gate}
     if args.command in handlers:
         return handlers[args.command](args)
     return _run(args), EXIT_OK
@@ -572,6 +613,57 @@ def _paper(args: argparse.Namespace) -> tuple[str, int]:
     graded = graded_market_rows(tickets, results)
     path = write_market_report(tickets, settlements, graded, MARKET_REPORT)
     return f"Wrote {path}.", EXIT_OK
+
+
+# ---------- Phase 15 ----------
+def _validate(args: argparse.Namespace) -> tuple[str, int]:
+    from .predict.validation_report import (
+        FAST_VALIDATE_MODELS, ValidateOptions, run_validation, write_validation_report,
+    )
+
+    times = args.log.parent / "validation_times.csv"
+    if args.merge:
+        from .predict.backtest import LOG_COLUMNS
+        from .predict.experiments import merge_logs
+        added = merge_logs(args.merge, args.log, LOG_COLUMNS)
+        path = write_validation_report(args.log, args.report, args.embargo, times_path=times,
+                                       note=args.note)
+        return f"Merged {added} new rows into {args.log}; wrote {path}.", EXIT_OK
+    if args.report_only:
+        path = write_validation_report(args.log, args.report, args.embargo, times_path=times,
+                                       note=args.note)
+        return f"Wrote {path} (from the log; nothing retrained).", EXIT_OK
+    if args.embargo < 0 or any(e < 0 for e in args.sensitivity):
+        raise ValueError("Embargoes must be >= 0.")
+    models = [m for m in (args.models or FAST_VALIDATE_MODELS) if m != "M2-full"]
+    options = ValidateOptions(
+        models=models, moments=args.moments or MOMENT_CHOICES, blocks=args.blocks,
+        test_blocks=args.test_blocks, embargo=args.embargo,
+        sensitivity=tuple(args.sensitivity),
+        include_m2=args.include_m2 or "M2-full" in (args.models or []),
+        m2_seeds=args.m2_seeds, pools=not args.no_pools,
+        walk_forward=not args.no_walk_forward, log_path=args.log,
+        report_path=None if args.no_report else args.report, times_path=times)
+    lines = run_validation(_load_data(args.dataset), options,
+                           progress=lambda text: logging.getLogger(__name__).info(text))
+    return "\n".join(lines), EXIT_OK
+
+
+def _gate(args: argparse.Namespace) -> tuple[str, int]:
+    from .predict.backtest import gate_v2, load_evidence
+    from .predict.experiments import count_trials, model_family, read_log
+
+    candidate = load_evidence(args.candidate, args.moment, args.log, embargo=args.embargo,
+                              season=args.season)
+    incumbent = load_evidence(args.incumbent, args.moment, args.log, embargo=args.embargo,
+                              season=args.season, data=candidate.data)
+    trials = max(count_trials(read_log(args.log), model_family(args.candidate),
+                              args.moment), 1)
+    decision = gate_v2(candidate, incumbent, n_trials=trials, season=args.season)
+    lines = [decision.verdict(), "", *decision.reasons(),
+             "", f"Trials in family '{model_family(args.candidate)}' at '{args.moment}': "
+                 f"{trials}."]
+    return "\n".join(lines), EXIT_OK
 
 
 # ---------- Phase 13 ----------

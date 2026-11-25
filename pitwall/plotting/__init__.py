@@ -16,6 +16,7 @@ from .qualifying import qualifying_overview
 from .race import position_changes, team_pace_boxplot
 from .strength_plots import car_strength_plot, driver_skill_plot, strength_vs_result
 from .telemetry_plots import delta_plot, gear_map, speed_map, speed_trace
+from .validation_plots import cpcv_boxplot, embargo_plot
 
 __all__ = [
     "COMPOUND_COLOURS", "STINT_COLOURS", "TEAM_COLOURS", "compound_colour", "driver_style",
@@ -28,4 +29,5 @@ __all__ = [
     "car_strength_plot", "driver_skill_plot", "strength_vs_result",
     "attribution_plot", "embedding_plot", "start_weight_plot", "weights_plot",
     "position_heatmap", "prediction_bars", "track_record_plot",
+    "cpcv_boxplot", "embargo_plot",
 ]
