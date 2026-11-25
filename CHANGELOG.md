@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.1.0.dev14 — Phase 14: quant analysis (paper trading only)
+### Step 0: the after-qualifying problem (found on the real data)
+The first backtest had every model losing to the plain grid after qualifying, with
+B1/M1 retirement (DNF) log loss jumping from ~0.34 to ~0.77 at that moment only.
+`examples/diagnose_quali.py` + `.github/workflows/diagnose.yml` compared before and
+after on the real 2025 season (report: `reports/diagnose_quali.md`). Cause: extreme
+inputs. At Miami 2025 the old models gave every driver a 100% retirement chance.
+Fixes (each with a test in `tests/test_phase14_quali_fix.py`):
+1. `quali_gap_pct` is measured inside the deepest session each driver reached (a dry
+   Q1 lap is never compared with a wet Q3 pole), made monotone in qualifying order and
+   capped at 5%; team-mate gap capped at ±3% (was up to 95%).
+2. `practice_pace_gap_pct` capped at 5% (was up to 58%: installation laps).
+3. `design_matrix` treats ±inf as missing (it used to become 1.8e308).
+4. B1, M1 and M2 clip standardised inputs to ±5 sd (`base.standardise`, `Z_CLIP`).
+Result on 2025: after-qualifying DNF log loss 0.767 → 0.328 (B1) and 0.767 → 0.327 (M1).
+NOT fixed: for the winner, the grid baseline still beats B1/M1 after qualifying
+(win LL 0.096 vs ~0.124): see the handoff notes. `reports/final_config.json` stays
+frozen (it already uses the grid after qualifying).
+
+### The market module (`pitwall/market/`)
+- `odds.py`: decimal / fractional / American / probability prices, overround,
+  de-vigging (multiplicative, additive, power, Shin), expected value, edge.
+- `staking.py`: Kelly (single), exact multi-outcome Kelly (Smoczynski–Tomkins),
+  quarter-Kelly `StakePolicy` with edge / value / odds filters and per-bet and per-race caps.
+- `sources.py`: `ManualCsvSource` (prices typed in from public pages,
+  `data/markets/<year>-<round>.csv`, every problem reported with its line), read-only
+  `PolymarketSource` (public Gamma event + CLOB price history, no key; only for a slug you
+  name), `Roster` name matching (id, code, full name, surname, accents).
+- `compare.py`: market snapshot with a leakage guard (only prices seen before the
+  prediction), consensus over sources, engine vs market table, log-loss comparison with a
+  paired bootstrap, Benter's two-stage conditional logit (does the engine add
+  information beyond the market?) with standard errors, walk-forward combination.
+- `paper.py`: pretend tickets written before the race (never overwritten), settlement
+  with closing line value, per-moment pretend bankrolls, ROI with bootstrap interval,
+  drawdown, per-race Sharpe, risk of ruin, races needed for significance.
+- `report.py`: `reports/market.md` with plots.
+- CLI: `market template|check|find`, `paper trade|settle|report`.
+- Workflows: paper trade after each prediction (skips without prices); settle + report
+  in the Monday score job. Race PDF: an "Engine vs market" section when prices exist.
+- `tests/test_phase14_market.py` (35 tests). No real money anywhere, by design.
+
 ## 2.0.0rc2 — Phase 13
 - `pitwall/report/`: LaTeX race-preview PDF (Jinja2 with `\VAR{}` / `\BLOCK{}` delimiters,
   LuaLaTeX + fontspec, every data value escaped). Sections: cover, one-minute summary,

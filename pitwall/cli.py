@@ -115,6 +115,32 @@ def build_parser() -> argparse.ArgumentParser:
                        help="run again (the report is labelled as a re-run)")
     final.add_argument("--dataset", type=Path)
 
+    # ----- Phase 14: the market (paper trading only) -----
+    market = sub.add_parser("market", help="market prices (read-only, free sources)")
+    market_sub = market.add_subparsers(dest="market_command", required=True)
+    template = market_sub.add_parser("template", help="a CSV to type public prices into")
+    template.add_argument("year")
+    template.add_argument("event", nargs="?", default="next")
+    check = market_sub.add_parser("check", help="market vs engine for one race")
+    check.add_argument("year")
+    check.add_argument("event", nargs="?", default="next")
+    _moment(check)
+    find = market_sub.add_parser("find", help="search Polymarket events (to get a slug)")
+    find.add_argument("query", help="e.g. 'Abu Dhabi Grand Prix'")
+
+    paper = sub.add_parser("paper", help="paper trading: pretend stakes, never real money")
+    paper_sub = paper.add_subparsers(dest="paper_command", required=True)
+    trade = paper_sub.add_parser("trade", help="paper bets for a saved prediction")
+    trade.add_argument("year")
+    trade.add_argument("event", nargs="?", default="next")
+    _moment(trade)
+    trade.add_argument("--market", choices=["win", "podium", "points"], default="win")
+    trade.add_argument("--skip-if-unavailable", action="store_true")
+    trade.add_argument("--skip-if-exists", action="store_true")
+    _within(trade)
+    paper_sub.add_parser("settle", help="settle tickets whose race has finished")
+    paper_sub.add_parser("report", help="write reports/market.md")
+
     report = sub.add_parser("report", help="LaTeX/PDF race preview (needs LuaLaTeX)")
     report.add_argument("year", help="season, or 'next'")
     report.add_argument("event", nargs="?", default="next")
@@ -180,7 +206,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _dispatch(args: argparse.Namespace) -> tuple[str, int]:
     handlers = {"next": _next, "predict": _predict, "backtest": _backtest,
                 "dataset": _dataset, "score": _score, "final-2026": _final,
-                "report": _report}
+                "report": _report, "market": _market, "paper": _paper}
     if args.command in handlers:
         return handlers[args.command](args)
     return _run(args), EXIT_OK
@@ -422,6 +448,130 @@ def _final(args: argparse.Namespace) -> tuple[str, int]:
                              history, confirmed=True, force=args.force)
     label = " (RE-RUN)" if outcome.rerun else ""
     return f"Wrote {outcome.report} and {outcome.lock}{label}.", EXIT_OK
+
+
+# ---------- Phase 14 ----------
+def _race_record(sources: Any, year_text: str, event_text: str,
+                 moment: str | None) -> tuple[int, dict[str, Any], dict[str, Any]]:
+    """(year, schedule row, the saved prediction record) for a race and moment."""
+    from .predict.live import find_event
+    from .predict.records import load_records
+    from .predict.service import resolve_event
+
+    year, event = resolve_event(sources, year_text, event_text, utcnow())
+    race = find_event(sources.jolpica.get_schedule(year), event)
+    mine = [r for r in load_records() if r["year"] == year and r["round"] == int(race["Round"])
+            and (moment is None or r["moment"] == moment)]
+    if not mine:
+        which = f"'{moment}' " if moment else ""
+        raise DataNotAvailableError(f"No {which}prediction saved for {year} {race['EventName']} "
+                                    "yet: run pitwall-f1 predict first.")
+    return year, race, mine[-1]
+
+
+def _market(args: argparse.Namespace) -> tuple[str, int]:
+    from .market import PolymarketSource, Roster, load_prices, market_snapshot, race_table
+    from .market.odds import overround
+    from .market.sources import write_template
+    from .predict.records import record_frame
+
+    if args.market_command == "find":
+        events = PolymarketSource().find_events(args.query)
+        if not events:
+            return "No Polymarket events found.", EXIT_OK
+        lines = [f"{e['slug']}  ({e['title']}, closed={e['closed']})" for e in events]
+        return ("\n".join(lines) + "\n\nPut the right slug in data/markets/polymarket.csv "
+                "(year,round,event_slug)."), EXIT_OK
+    sources = make_sources(openf1=False, weather=False)
+    moment = getattr(args, "moment", None) if args.market_command == "check" else None
+    year, race, record = _race_record(sources, args.year, args.event, moment)
+    roster = Roster.from_record(record)
+    if args.market_command == "template":
+        path = write_template(year, int(race["Round"]), roster, event=str(race["EventName"]))
+        return f"Wrote {path}: fill in prices from public pages (paper trading only).", EXIT_OK
+    prices = load_prices(year, int(race["Round"]), roster)
+    lines = []
+    for source, book in prices[prices["Market"] == "win"].groupby("Source"):
+        latest = book.sort_values("Timestamp").groupby("DriverId").last()
+        if len(latest) >= 2:
+            lines.append(f"{source}: {len(latest)} drivers, margin "
+                         f"{overround(latest['Odds'].to_numpy()):.1%}")
+    snap = market_snapshot(prices, "win", record["created_utc"])
+    table = race_table(record_frame(record), snap)
+    if table.empty:
+        lines.append("No prices from before the prediction was made.")
+    else:
+        shown = table[["Driver", "p_engine", "p_market", "edge", "best_odds", "ev"]].head(12)
+        lines += ["", shown.round(3).to_string(index=False)]
+    return "\n".join(lines), EXIT_OK
+
+
+def _paper(args: argparse.Namespace) -> tuple[str, int]:
+    from .market import (
+        StakePolicy, bankroll, load_prices, load_settlements, load_tickets, make_ticket,
+        save_settlement, save_ticket, settle, write_market_report,
+    )
+    from .market.paper import TicketExistsError, closing_snapshot, settlement_path
+    from .market.report import MARKET_REPORT, graded_market_rows
+    from .market.sources import Roster
+    from .predict.service import results_table
+
+    sources = make_sources(openf1=False, weather=False)
+    if args.paper_command == "trade":
+        from .predict.service import resolve_event
+        resolved_year, resolved_event = resolve_event(sources, args.year, args.event, utcnow())
+        far = _too_far(sources, resolved_year, resolved_event, args.within_days)
+        if far:
+            return far, EXIT_OK
+        year_i, race, record = _race_record(sources, str(resolved_year), resolved_event,
+                                            args.moment)
+        prices = load_prices(year_i, int(race["Round"]), Roster.from_record(record))
+        bank = bankroll(args.moment)
+        ticket = make_ticket(record, prices, StakePolicy(), bank, args.market)
+        try:
+            path = save_ticket(ticket)
+        except TicketExistsError as exc:
+            if args.skip_if_exists:
+                return f"Nothing to do: {exc}", EXIT_OK
+            raise
+        bets = ticket["bets"]
+        lines = [f"Paper ticket {path} (pretend bankroll {bank:.0f}; no real money)."]
+        lines += [f"  {b['Driver']}: {b['stake']:.2f} at {b['best_odds']:.2f} "
+                  f"(engine {b['p_engine']:.1%} vs market {b['p_market']:.1%})" for b in bets]
+        if not bets:
+            lines.append("  No bets: no driver passed the edge and value filters.")
+        return "\n".join(lines), EXIT_OK
+    tickets = load_tickets()
+    if args.paper_command == "settle":
+        open_tickets = [t for t in tickets if not settlement_path(t["stem"]).exists()]
+        if not open_tickets:
+            return "Nothing to settle.", EXIT_OK
+        years = sorted({int(t["year"]) for t in open_tickets})
+        results = results_table(sources, years, utcnow)
+        lines = []
+        for ticket in open_tickets:
+            race = results[(results["Year"] == ticket["year"])
+                           & (results["Round"] == ticket["round"])]
+            if race.empty:
+                continue
+            try:
+                roster = Roster({b["DriverId"]: b["Driver"] for b in ticket["market_table"]})
+                closing = closing_snapshot(ticket, load_prices(ticket["year"], ticket["round"],
+                                                               roster))
+            except (DataNotAvailableError, PitwallError):
+                closing = None
+            done = settle(ticket, race, closing)
+            save_settlement(done)
+            lines.append(f"Settled {ticket['stem']}: P&L {done['pnl']:+.2f} (pretend units)")
+        return "\n".join(lines) or "No finished races among the open tickets.", EXIT_OK
+    import pandas as pd
+
+    settlements = load_settlements()
+    years = sorted({int(t["year"]) for t in tickets})
+    results = results_table(sources, years, utcnow) if years else pd.DataFrame()
+    graded = graded_market_rows(tickets, results)
+    path = write_market_report(tickets, settlements, graded, MARKET_REPORT)
+    return f"Wrote {path}.", EXIT_OK
 
 
 # ---------- Phase 13 ----------

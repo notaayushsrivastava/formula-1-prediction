@@ -142,6 +142,25 @@ Explanations are not available for this race.
 \vspace{6pt}
 Final probabilities come from \VAR{pipeline|e}. When several models are blended, their weights were fitted only on races before this one.
 
+\BLOCK{if market.rows}
+\sectionline{Engine vs market}
+{\small Win chances from the engine and from market prices seen before this prediction (margin removed). Edge = engine minus market, in percentage points. Paper trading only: \textbf{no real money, not betting advice}.}
+
+\vspace{4pt}
+{\small
+\begin{tabular}{l r r r r}
+\toprule
+Driver & Engine & Market & Edge (pts) & Best odds \\
+\midrule
+\BLOCK{for r in market.rows}
+\VAR{r.driver|e} & \VAR{r.engine|pct} & \VAR{r.market|pct} & \VAR{r.edge|e} & \VAR{r.odds|e} \\
+\BLOCK{endfor}
+\bottomrule
+\end{tabular}}
+
+{\scriptsize Prices from: \VAR{market.source|e}.}
+\BLOCK{endif}
+
 \sectionline{Championship impact}
 \VAR{championship.text|e}
 

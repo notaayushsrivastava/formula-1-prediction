@@ -23,7 +23,9 @@ htmlcov/
 /*.png
 
 # Prediction data and models: never commit data
-/data/
+/data/*
+# ...except the small, hand-typed market price files (Phase 14, paper trading)
+!/data/markets/
 /models/
 *.parquet
 /artifacts/

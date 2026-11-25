@@ -54,6 +54,7 @@ LABELS = ["Finish", "FinishOrder", "Win", "Podium", "PointsFinish", "DNF", "Mech
 OBSERVATIONS = ["QualiGapObs", "PracticeGapObs"]  # this race's raw gaps (%), NaN if none
 DIAGNOSTICS = ["CircuitCluster", "RaceWet", "Neutralised", "RaceRainMm"]  # never features
 DEFAULT_PATH = DEFAULT_CACHE_DIR / "predict" / "dataset.parquet"
+PRACTICE_GAP_CAP = 5.0  # % behind the fastest long run; more is noise (installation laps)
 
 ROOKIE_FINISH = 15.0  # no history yet: assume a back-of-the-midfield finish
 FILL: dict[str, float] = {
@@ -177,7 +178,8 @@ def _fill(df: pd.DataFrame) -> pd.DataFrame:
     out["has_openf1"] = out["has_openf1"].fillna(0).astype(int)
     out["has_practice_pace"] = out["has_practice_pace"].fillna(0).astype(int)
     field_median = out.groupby("RaceId")["practice_pace_gap_pct"].transform("median")
-    out["practice_pace_gap_pct"] = out["practice_pace_gap_pct"].fillna(field_median).fillna(0.0)
+    out["practice_pace_gap_pct"] = (out["practice_pace_gap_pct"].fillna(field_median)
+                                    .fillna(0.0).clip(0.0, PRACTICE_GAP_CAP))
     out["driver_avg_finish_5"] = out["driver_avg_finish_5"].fillna(ROOKIE_FINISH)
     out["driver_avg_finish_circuit"] = out["driver_avg_finish_circuit"].fillna(
         out["driver_avg_finish_5"])
