@@ -58,6 +58,31 @@ def per_race_log_loss(preds: pd.DataFrame, kind: str = "win") -> pd.Series:
     return losses.groupby(preds["RaceId"]).mean()
 
 
+def race_loss_table(preds: pd.DataFrame) -> pd.DataFrame:
+    """One row per race (Phase 15 experiment log): RaceId, Date, Year, n_rows and the mean
+    win / podium / points / dnf log loss within the race, plus 'winner' = -log P_win of
+    the actual winner. Sorted by date. Row-weighted means (by n_rows) reproduce the
+    driver-row averages of summarise()."""
+    races = preds.groupby("RaceId", sort=False)
+    table = pd.DataFrame({"n_rows": races.size()})
+    for kind in BINARY:
+        table[kind] = per_race_log_loss(preds, kind)
+    winners = preds[preds["Win"] == 1].drop_duplicates("RaceId").set_index("RaceId")
+    table["winner"] = -np.log(np.clip(winners["P_win"].astype(float), EPS, 1.0))
+    context = [c for c in ("Date", "Year") if c in preds.columns]
+    if context:
+        table = table.join(races[context].first())
+    table = table.reset_index()
+    order = ["Date", "RaceId"] if "Date" in table else ["RaceId"]
+    return table.sort_values(order).reset_index(drop=True)
+
+
+def weighted_loss(table: pd.DataFrame, kind: str = "win") -> float:
+    """Driver-row average of a race_loss_table column (each race weighted by n_rows)."""
+    weights = table["n_rows"].to_numpy(float)
+    return float(np.sum(weights * table[kind].to_numpy(float)) / np.sum(weights))
+
+
 # ---------- whole order ----------
 def ranked_probability_score(preds: pd.DataFrame) -> float:
     """Mean RPS per driver: squared gaps between predicted and actual cumulative

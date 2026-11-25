@@ -2,7 +2,8 @@
 
 Phase 7: dataset. Phase 8: B0-B2, backtest, metrics, report. Phase 9: Kalman strength
 filter and M1. Phase 10: M2 neural ranker. Phase 11: M3 simulator, online stacking,
-online calibration, the final pipeline.
+online calibration, the final pipeline. Phase 15: CPCV (validation.py), statistics
+(significance.py), experiment log v2 (experiments.py) and gate_v2.
 Only pandas/numpy/scipy are imported here; heavy libraries load lazily.
 """
 from .dataset import (
@@ -11,8 +12,8 @@ from .dataset import (
 )
 from .history import History, load_history
 from .backtest import (
-    BacktestResult, GateResult, LeakageError, LockedSeasonError, compare_models, gate,
-    run_backtest, walk_forward,
+    BacktestResult, Evidence, GateDecision, GateResult, LeakageError, LockedSeasonError,
+    compare_models, gate, gate_v2, load_evidence, run_backtest, walk_forward,
 )
 from .metrics import BENCHMARKS, paired_bootstrap, summarise
 from .models import (
@@ -27,6 +28,8 @@ from .ensemble import (
 )
 from .calibration import calibrate_forward, fit_temperature, temper
 from .pipeline import CONFIG_PATH, FinalPipeline, MomentChoice, PipelineConfig
+from .ensemble import PooledModel, pool_forward
+from .validation import CPCVPlan, CPCVResult, path_losses, plan_cpcv, run_cpcv
 
 __all__ = ["ALL_FEATURES", "DIAGNOSTICS", "FEATURES", "ID_COLUMNS", "LABELS", "MOMENTS",
            "OBSERVATIONS", "build_dataset", "feature_columns", "load_dataset",
@@ -40,4 +43,6 @@ __all__ = ["ALL_FEATURES", "DIAGNOSTICS", "FEATURES", "ID_COLUMNS", "LABELS", "M
            "observation_table", "STRENGTH_FEATURES", "StrengthFeatures",
            "METHODS", "build_stacks", "fit_weights", "pool", "result_from_predictions",
            "stack_forward", "calibrate_forward", "fit_temperature", "temper",
-           "CONFIG_PATH", "FinalPipeline", "MomentChoice", "PipelineConfig"]
+           "CONFIG_PATH", "FinalPipeline", "MomentChoice", "PipelineConfig",
+           "Evidence", "GateDecision", "gate_v2", "load_evidence", "PooledModel",
+           "pool_forward", "CPCVPlan", "CPCVResult", "path_losses", "plan_cpcv", "run_cpcv"]
