@@ -1,0 +1,33 @@
+{
+  "moments": {
+    "pre": {
+      "models": [
+        "B1 logistic"
+      ],
+      "method": "single",
+      "calibrate": false,
+      "l2": 0.05
+    },
+    "practice": {
+      "models": [
+        "B1 logistic"
+      ],
+      "method": "single",
+      "calibrate": false,
+      "l2": 0.05
+    },
+    "quali": {
+      "models": [
+        "B0 grid slot"
+      ],
+      "method": "single",
+      "calibrate": false,
+      "l2": 0.05
+    }
+  },
+  "n_seeds": 10,
+  "note": "best single model per moment, backtest (2024, 2025)",
+  "extra": {},
+  "created": "2026-11-25T02:12:17+00:00",
+  "git": "04e03e2"
+}
