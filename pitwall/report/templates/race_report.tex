@@ -1,0 +1,219 @@
+\#{ pitwall-f1 race preview, rendered with Jinja2 (see pitwall/report/latex.py) }
+\documentclass[10pt,a4paper]{article}
+\pdfvariable objcompresslevel=0
+\usepackage{fontspec}
+\usepackage[margin=1.8cm,top=2.0cm,bottom=2.0cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage[table]{xcolor}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage[hidelinks]{hyperref}
+\definecolor{pitred}{HTML}{C8102E}
+\definecolor{boxbg}{HTML}{F4F4F4}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancyhead[L]{\small pitwall-f1 \textbar{} \VAR{title|e}}
+\fancyhead[R]{\small moment: \VAR{moment|e}}
+\fancyfoot[L]{\scriptsize Educational project. Not betting advice. Not affiliated with Formula 1.}
+\fancyfoot[R]{\small \thepage\ / \pageref{LastPage}}
+\newcommand{\sectionline}[1]{\vspace{6pt}{\Large\bfseries\color{pitred}#1}\par\vspace{2pt}\hrule\vspace{4pt}}
+
+\begin{document}
+
+\thispagestyle{fancy}
+\begin{center}
+{\color{pitred}\rule{\linewidth}{2pt}}\\[8pt]
+{\Huge\bfseries \VAR{title|e}}\\[4pt]
+{\Large Race preview \textendash{} \VAR{moment_text|e}}\\[6pt]
+{\large Round \VAR{round} \textbullet{} \VAR{race_date|e} \textbullet{} \VAR{place|e}}\\[6pt]
+{\color{pitred}\rule{\linewidth}{2pt}}
+\end{center}
+
+\vspace{6pt}
+\fcolorbox{pitred}{boxbg}{\begin{minipage}{0.96\linewidth}
+\vspace{4pt}
+{\large\bfseries In one minute}\par
+\begin{itemize}\setlength{\itemsep}{1pt}
+\item \textbf{Favourite:} \VAR{summary.favourite|e} wins with probability \textbf{\VAR{summary.favourite_p|pct}}; next is \VAR{summary.second|e} (\VAR{summary.second_p|pct}).
+\item \textbf{Most likely podium:} \BLOCK{for d, p in summary.podium}\VAR{d|e} (\VAR{p|pct})\BLOCK{if not loop.last}, \BLOCK{endif}\BLOCK{endfor}.
+\item \textbf{Upset chance:} \VAR{summary.upset|pct} that the winner is none of the three favourites.
+\item \textbf{Reliability risk:} \VAR{summary.dnf_driver|e} has the highest chance of not finishing (\VAR{summary.dnf_p|pct}).
+\BLOCK{if weather.available}
+\item \textbf{Weather forecast (race window):} about \VAR{weather.air|e}\,°C, \VAR{weather.rain|e}\,mm of rain\BLOCK{if weather.track}; track \VAR{weather.track|e}\,°C in practice\BLOCK{endif}.
+\BLOCK{else}
+\item \textbf{Weather:} no forecast was available, so the model used neutral defaults.
+\BLOCK{endif}
+\end{itemize}
+\vspace{2pt}
+\end{minipage}}
+
+\vspace{8pt}
+{\small Made \VAR{created|e} UTC with \VAR{pipeline|e}. Git \texttt{\VAR{git|e}}, config \texttt{\VAR{config_hash|e}}, pitwall-f1 \VAR{version|e}. This PDF was built \VAR{built|e}. The prediction itself is stored as \texttt{predictions/\VAR{year}-\VAR{"%02d"|format(round)}-\VAR{moment|e}.json} in the repository, committed before the race.}
+
+\BLOCK{if warnings or notes}
+\vspace{4pt}
+{\small\textbf{Data notes.}
+\BLOCK{for w in warnings} \textcolor{pitred}{\textbullet} \VAR{w|e}\BLOCK{endfor}
+\BLOCK{for n in notes} \textbullet{} \VAR{n|e}\BLOCK{endfor}}
+\BLOCK{endif}
+
+\vspace{6pt}
+{\small\textbf{How to read this.} Every number is a probability from many simulated races. A 30\% favourite loses 7 times out of 10: these are odds, not certainties. Grid position, recent form, the car's estimated strength and (when available) practice pace and the weather forecast go in; see the methodology on the last page.}
+
+\newpage
+\sectionline{The full field}
+Drivers ordered by expected finishing position. B0 is the simple grid-slot baseline made at the same moment: the model has to beat it to be worth anything.
+
+\vspace{4pt}
+{\small
+\rowcolors{2}{white}{boxbg}
+\begin{tabular}{r l l r r r r r r r}
+\toprule
+\# & Driver & Team & Grid & Win & Podium & Points & DNF & Exp.\ pos & B0 win \\
+\midrule
+\BLOCK{for r in rows}
+\VAR{r.pos} & \textbf{\VAR{r.driver|e}} & \VAR{r.team|e} & \VAR{r.grid|e} & \VAR{r.win|pct} & \VAR{r.podium|pct} & \VAR{r.points|pct} & \VAR{r.dnf|pct} & \VAR{r.exp|e} & \VAR{r.b0|pct} \\
+\BLOCK{endfor}
+\bottomrule
+\end{tabular}}
+
+\vspace{6pt}
+{\small Data available at this moment: \BLOCK{for k, v in availability.items()}\texttt{\VAR{k|e}}=\VAR{v|e}\BLOCK{if not loop.last}, \BLOCK{endif}\BLOCK{endfor}. A flag of 0 means that information was missing and the model used a neutral default instead of guessing.}
+
+\newpage
+\sectionline{Probabilities}
+\begin{center}
+\includegraphics[width=0.92\linewidth,height=0.42\textheight,keepaspectratio]{\VAR{fig_bars}}
+
+\includegraphics[width=0.95\linewidth,height=0.42\textheight,keepaspectratio]{\VAR{fig_heatmap}}
+\end{center}
+
+\newpage
+\sectionline{Teams and strategy}
+\begin{center}
+\includegraphics[width=0.85\linewidth,height=0.33\textheight,keepaspectratio]{\VAR{fig_teams}}
+\end{center}
+\BLOCK{if fig_tyres}
+\begin{center}
+\includegraphics[width=0.85\linewidth,height=0.36\textheight,keepaspectratio]{\VAR{fig_tyres}}
+\end{center}
+{\small Last visit's race strategy: how many stops and which compounds worked here. A hint for this race, not a prediction of it.}
+\BLOCK{else}
+{\small Tyre strategy: \VAR{tyre_text|e}}
+\BLOCK{endif}
+
+\sectionline{Safety car}
+\BLOCK{if fig_sc}
+\begin{center}
+\includegraphics[width=0.85\linewidth,height=0.2\textheight,keepaspectratio]{\VAR{fig_sc}}
+\end{center}
+{\small \VAR{sc_text|e} A safety car bunches the field and can turn a race; it is one reason favourites lose.}
+\BLOCK{else}
+{\small \VAR{sc_text|e}}
+\BLOCK{endif}
+
+\newpage
+\sectionline{Why: what drives the prediction}
+\BLOCK{if why}
+\BLOCK{for block in why}
+The biggest factors in a transparent logistic ranking model (B1) trained on the same races. Weights are per standard deviation; positive = helps a driver finish ahead. The last column shows how each factor moves the model's favourite, \textbf{\VAR{block.driver|e}}, relative to an average driver.
+
+\vspace{4pt}
+{\small
+\begin{tabular}{l r l r}
+\toprule
+Factor & Weight & Effect & For \VAR{block.driver|e} \\
+\midrule
+\BLOCK{for r in block.rows}
+\VAR{r.feature|e} & \VAR{r.weight|e} & \VAR{r.direction|e} & \VAR{r.fav|e} \\
+\BLOCK{endfor}
+\bottomrule
+\end{tabular}}
+\BLOCK{endfor}
+\BLOCK{else}
+Explanations are not available for this race.
+\BLOCK{endif}
+
+\vspace{6pt}
+Final probabilities come from \VAR{pipeline|e}. When several models are blended, their weights were fitted only on races before this one.
+
+\sectionline{Championship impact}
+\VAR{championship.text|e}
+
+\BLOCK{if championship.rows}
+\vspace{4pt}
+{\small
+\begin{tabular}{l r r r c r}
+\toprule
+Driver & Points now & Expected here & Expected after & Can still win & Title chance$^{*}$ \\
+\midrule
+\BLOCK{for r in championship.rows}
+\VAR{r.driver|e} & \VAR{r.now|e} & \VAR{r.exp|e} & \VAR{r.after|e} & \VAR{r.alive|e} & \VAR{r.odds|pct} \\
+\BLOCK{endfor}
+\bottomrule
+\end{tabular}}
+
+{\scriptsize $^{*}$ From pitwall's simple form-based season simulation (before this race), not from the race model. -- = not available.}
+\BLOCK{endif}
+
+\newpage
+\sectionline{Track record}
+\BLOCK{if track.n}
+How earlier live predictions did (graded after each race; lower log loss is better; targets: win \VAR{targets.win_logloss}, podium \VAR{targets.podium_logloss}).
+
+{\small
+\begin{tabular}{l r r r r r}
+\toprule
+Moment & Races & Win LL & B0 win LL & Podium LL & Winner hit \\
+\midrule
+\BLOCK{for r in track.rows}
+\VAR{r.moment|e} & \VAR{r.n} & \VAR{r.win|e} & \VAR{r.b0|e} & \VAR{r.podium|e} & \VAR{r.hit|e} \\
+\BLOCK{endfor}
+\bottomrule
+\end{tabular}}
+\BLOCK{if fig_track}
+\begin{center}
+\includegraphics[width=0.8\linewidth,height=0.25\textheight,keepaspectratio]{\VAR{fig_track}}
+\end{center}
+\BLOCK{endif}
+\BLOCK{else}
+No live prediction has been graded yet. Every prediction is saved before the race and graded afterwards in \texttt{reports/track\_record.md}.
+\BLOCK{endif}
+
+\sectionline{Methodology}
+{\small
+\textbf{Data.} One row per driver per race since 2018, built three times: before the weekend, after practice and after qualifying. A feature is only filled when it really exists at that moment (no future information); missing information gets an availability flag of 0.
+
+\textbf{Models.} B0: how often each grid slot finished where (baseline). B1: a rank-ordered logistic model. B2: gradient-boosted trees (LightGBM). M1: a Kalman filter that tracks each car's and driver's strength race by race. M2: a small neural network (PyTorch, CPU) with monotone constraints. M3: a race simulator. Each turns a strength score per driver into finishing-order probabilities with Plackett--Luce sampling (20\,000 simulated races).
+
+\textbf{Blending and calibration.} Models are blended with weights fitted only on earlier races; probabilities can be tempered so that ``20\%'' really happens about 20\% of the time.
+
+\textbf{Testing.} Walk-forward backtests on 2024--2025 (every race predicted using only earlier races). The 2026 season is a locked final test, evaluated once after the last race. Targets: \VAR{targets.win_logloss} (win) and \VAR{targets.podium_logloss} (podium) log loss, the best open-source model found.
+
+\textbf{Limits.} FIA grid penalties announced after qualifying are not parsed; driver mood, upgrades and team orders are invisible to the model; one race is a very small sample.}
+
+\sectionline{Sources and licences}
+{\small
+\begin{tabular}{l l l l}
+\toprule
+Source & Where & Licence & Used for \\
+\midrule
+\BLOCK{for name, where, licence, use in licences}
+\VAR{name|e} & \VAR{where|e} & \VAR{licence|e} & \VAR{use|e} \\
+\BLOCK{endfor}
+\bottomrule
+\end{tabular}}
+
+{\small Non-commercial, educational use only. Free data sources only; no paid live timing.}
+
+\vspace{6pt}
+\fcolorbox{pitred}{white}{\begin{minipage}{0.96\linewidth}\small
+\textbf{Disclaimer.} pitwall-f1 is an educational, open-source project. Nothing here is betting or financial advice. It is not affiliated with, endorsed by or connected to Formula 1, the FIA or any team. F1, FORMULA ONE and related marks are trademarks of Formula One Licensing B.V.
+\end{minipage}}
+
+\end{document}

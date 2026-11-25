@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: CPU-only PyTorch (small download, no GPU libraries)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest --cov=pitwall --cov-report=term-missing
+
+  latex:
+    # Compiles the sample race report once, so template errors show up in CI.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: LuaLaTeX (free, from Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends texlive-luatex \
+            texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended lmodern
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/test_phase13.py -v
+
+  types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true  # informational until mypy is clean; then remove this line
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[dev]"
+      - run: mypy pitwall

@@ -1,0 +1,101 @@
+# The LaTeX race-preview PDF, built on a free runner with LuaLaTeX from Ubuntu.
+# Friday 06:00 UTC = 'pre' report (before practice); Saturday 22:00 UTC = 'quali' report.
+# Published as a GitHub Release asset and on the Pages site (docs/reports/).
+# Safe to rerun: an existing release is left alone, missing data exits 0.
+name: race-report
+
+on:
+  schedule:
+    - cron: "0 6 * * 5"    # Friday 06:00 UTC   -> 'pre'
+    - cron: "0 22 * * 6"   # Saturday 22:00 UTC -> 'quali'
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Season, or 'next'"
+        default: "next"
+      event:
+        description: "Round number, name (e.g. Qatar) or 'next'"
+        default: "next"
+      moment:
+        description: "Moment"
+        type: choice
+        options: [pre, practice, quali]
+        default: pre
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pitwall-commits
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write      # commit the PDF + record, create the release
+    env:
+      MPLBACKEND: Agg
+      SCHEDULE: ${{ github.event.schedule }}
+      IN_YEAR: ${{ inputs.year }}
+      IN_EVENT: ${{ inputs.event }}
+      IN_MOMENT: ${{ inputs.moment }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: ~/.pitwall_cache
+          key: pitwall-${{ github.run_id }}
+          restore-keys: pitwall-
+      - name: LuaLaTeX (free, from Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends texlive-luatex \
+            texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended \
+            lmodern fonts-lmodern
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[ml]"
+      - name: Which race and moment
+        id: what
+        run: |
+          case "$SCHEDULE" in
+            "0 6 * * 5")  echo "moment=pre" >> "$GITHUB_OUTPUT"; echo "year=next" >> "$GITHUB_OUTPUT"; echo "event=next" >> "$GITHUB_OUTPUT" ;;
+            "0 22 * * 6") echo "moment=quali" >> "$GITHUB_OUTPUT"; echo "year=next" >> "$GITHUB_OUTPUT"; echo "event=next" >> "$GITHUB_OUTPUT" ;;
+            *) echo "moment=$IN_MOMENT" >> "$GITHUB_OUTPUT"; echo "year=$IN_YEAR" >> "$GITHUB_OUTPUT"; echo "event=$IN_EVENT" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Build the PDF (exits 0 if the data is not out yet)
+        env:
+          MOMENT: ${{ steps.what.outputs.moment }}
+          YEAR: ${{ steps.what.outputs.year }}
+          EVENT: ${{ steps.what.outputs.event }}
+        run: |
+          pitwall-f1 report "$YEAR" "$EVENT" --moment "$MOMENT" --within-days 4 \
+            --skip-if-unavailable | tee report.log
+      - name: Commit and publish
+        run: |
+          pdf=$(sed -n 's/^Wrote \(.*\.pdf\)$/\1/p' report.log | tail -1)
+          if [ -z "$pdf" ]; then echo "No report this time."; exit 0; fi
+          python -c "from pitwall.predict.records import load_records, write_docs; write_docs(load_records())"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add predictions docs "$pdf" 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "Race report: $(basename "$pdf")"
+            for attempt in 1 2 3; do
+              git pull --rebase && git push && break
+              sleep 15
+            done
+          fi
+          tag="report-$(basename "$pdf" .pdf)"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "Release $tag already exists."
+          else
+            gh release create "$tag" "$pdf" --title "Race preview $(basename "$pdf" .pdf)" \
+              --notes "Pre-race probabilities from pitwall-f1. Educational, not betting advice. Not affiliated with Formula 1."
+          fi

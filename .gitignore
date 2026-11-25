@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Tool caches and reports
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets: NEVER commit your F1 TV token
+.env
+*.token
+
+# pitwall output
+.pitwall_cache/
+/*.png
+
+# Prediction data and models: never commit data
+/data/
+/models/
+*.parquet
+/artifacts/
+*.pt
+*.pkl
+*.joblib
+
+# LaTeX build files (reports are built in a temporary folder)
+*.aux
+*.out
+*.fls
+*.fdb_latexmk

@@ -1,0 +1,87 @@
+# Live predictions. Cron times are UTC and GitHub may start them late; every step is
+# safe to rerun (an existing prediction is never overwritten, missing data exits 0).
+name: predict
+
+on:
+  schedule:
+    - cron: "0 12 * * 4"   # Thursday 12:00 UTC  -> 'pre'      (before the weekend)
+    - cron: "0 22 * * 5"   # Friday   22:00 UTC  -> 'practice' (after FP2)
+    - cron: "0 22 * * 6"   # Saturday 22:00 UTC  -> 'quali'    (grid set)
+  workflow_dispatch:
+    inputs:
+      year:
+        description: "Season, or 'next'"
+        default: "next"
+      event:
+        description: "Round number, name (e.g. Qatar) or 'next'"
+        default: "next"
+      moment:
+        description: "Moment"
+        type: choice
+        options: [pre, practice, quali]
+        default: pre
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pitwall-commits   # shared with score/train/race-report: one pusher at a time
+  cancel-in-progress: false
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write      # only this job may push (the prediction record)
+    env:
+      MPLBACKEND: Agg
+      SCHEDULE: ${{ github.event.schedule }}
+      IN_YEAR: ${{ inputs.year }}
+      IN_EVENT: ${{ inputs.event }}
+      IN_MOMENT: ${{ inputs.moment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Restore the download cache (f1db, Jolpica, OpenF1, Open-Meteo)
+        uses: actions/cache@v4
+        with:
+          path: ~/.pitwall_cache
+          key: pitwall-${{ github.run_id }}
+          restore-keys: pitwall-
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[ml]"
+      - name: Which race and moment
+        id: what
+        run: |
+          case "$SCHEDULE" in
+            "0 12 * * 4") echo "moment=pre" >> "$GITHUB_OUTPUT"; echo "year=next" >> "$GITHUB_OUTPUT"; echo "event=next" >> "$GITHUB_OUTPUT" ;;
+            "0 22 * * 5") echo "moment=practice" >> "$GITHUB_OUTPUT"; echo "year=next" >> "$GITHUB_OUTPUT"; echo "event=next" >> "$GITHUB_OUTPUT" ;;
+            "0 22 * * 6") echo "moment=quali" >> "$GITHUB_OUTPUT"; echo "year=next" >> "$GITHUB_OUTPUT"; echo "event=next" >> "$GITHUB_OUTPUT" ;;
+            *) echo "moment=$IN_MOMENT" >> "$GITHUB_OUTPUT"; echo "year=$IN_YEAR" >> "$GITHUB_OUTPUT"; echo "event=$IN_EVENT" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Predict (exits 0 if the data is not out yet or it was already done)
+        env:
+          MOMENT: ${{ steps.what.outputs.moment }}
+          YEAR: ${{ steps.what.outputs.year }}
+          EVENT: ${{ steps.what.outputs.event }}
+        run: |
+          pitwall-f1 predict "$YEAR" "$EVENT" --moment "$MOMENT" --within-days 4 \
+            --skip-if-unavailable --skip-if-exists
+      - name: Commit the record, reports and site
+        env:
+          MOMENT: ${{ steps.what.outputs.moment }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add predictions reports docs 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Nothing new to commit."; exit 0; fi
+          git commit -m "Prediction: $MOMENT ($(date -u +%Y-%m-%dT%H:%MZ))"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          exit 1
