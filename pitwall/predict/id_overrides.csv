@@ -1,0 +1,6 @@
+# Jolpica id -> f1db id, for renames the automatic matching gets wrong.
+# kind is driver, team or circuit. Automatic matching already tries: the same id with
+# '-' for '_', the car number in f1db's latest season, the team name, and (circuits)
+# the nearest f1db circuit within 10 km. Add a line only when an IdMappingError says so.
+# Example (commented out):  team,sauber,kick-sauber
+kind,jolpica_id,f1db_id

@@ -1,0 +1,87 @@
+# Changelog
+
+## 2.0.0rc2 — Phase 13
+- `pitwall/report/`: LaTeX race-preview PDF (Jinja2 with `\VAR{}` / `\BLOCK{}` delimiters,
+  LuaLaTeX + fontspec, every data value escaped). Sections: cover, one-minute summary,
+  full table vs B0, win/podium/points bars, position heatmap, team comparison, last visit's
+  tyre strategy (OpenF1), safety-car rate, "why" (B1 weights and the favourite's factors),
+  championship impact (expected points, title odds), track record, methodology, sources
+  and licences, disclaimer. Sections degrade to "not available"; 6 pages typical, max 8.
+- CLI `pitwall-f1 report YEAR EVENT --moment M [--out file.pdf] [--tex-only]`.
+- `.github/workflows/race-report.yml`: Friday 06:00 / Saturday 22:00 UTC + manual; PDF to a
+  GitHub Release and `docs/reports/`; tests workflow compiles the report once.
+- Records now store the race context (forecast, circuit facts) the model saw.
+- `tests/test_phase13.py`.
+
+## 2.0.0rc1 — Phase 12
+- `predict/live.py`: `ToppedUpHistory` (f1db + newer Jolpica races), `IdMapper`
+  (Jolpica -> f1db by id, car number, team name, circuit coordinates; overrides in
+  `predict/id_overrides.csv`; `IdMappingError` lists every unmatched id),
+  `build_live_rows` (same dataset code for the upcoming race; entry list from qualifying
+  or the last race checked against OpenF1; live Open-Meteo forecast at the moment's lead;
+  `SettledWeekend` never requests a session within an hour of its end; flags + warnings
+  for every missing piece; refuses finished races).
+- `predict/records.py`: prediction records (never overwritten), scoring, `track_record.md`,
+  the GitHub Pages site in `docs/`. `predict/service.py`: the steps behind the CLI.
+- `predict/final.py`: the one final 2026 run (`final_2026.md`, `FINAL_RUN.json`, refuses an
+  unfinished season, `--force` re-runs are labelled).
+- `FinalPipeline.predict(..., live=True)` for unraced locked-season races; `default_config`.
+- CLI: `next`, `predict`, `backtest`, `dataset build`, `score`, `final-2026`; exit codes.
+- Workflows: `tests` (+ CPU torch), `predict`, `train` (10-seed matrix), `score`.
+- Plots: `prediction_bars`, `position_heatmap`, `track_record_plot`. README v2.
+- Fixes: weekend track temperature uses the latest practice with data; OpenF1 `drivers`
+  endpoint; Open-Meteo live forecast; test fix in `test_phase9.py` (nested approx).
+
+## 2.0.0.dev11 — Phase 11 (unreleased)
+- `models/scores.py`: `ScoreSource` protocol (`scores`, `training_scores`) with adapters
+  for B1, M1/M1-pure and M2 (`as_score_source`); predictions unchanged (tested).
+- M3 `RaceSimulator`: structural Monte Carlo (pace from a score source with score_sd;
+  grid/pace blend a_c by circuit overtaking; neutralised races with kappa_sc and two-car
+  crashes; wet races from a logistic on past RaceWet; mechanical DNFs with a shared team
+  shock + incidents, shrunk to field rates); parameters fitted by a mixture-of-
+  Plackett-Luce likelihood on training rows; seeded per race.
+- `ensemble.py`: online stacking (`stack_forward`) with equal / linear / log pools,
+  softmax weights with an L2 pull to equal, `LeakageError` guard; `build_stacks`,
+  `fit_weights`, `pool`, `result_from_predictions`, `choose_pipelines`, report sections.
+- `calibration.py`: online matrix temperature (P^T + Sinkhorn) and Platt scaling for P_dnf
+  (`calibrate_forward`, `fit_temperature`, `fit_platt`).
+- `pipeline.py`: `FinalPipeline`, `PipelineConfig` / `MomentChoice`,
+  `reports/final_config.json`; refuses 2026 unless `final=True`.
+- Report: `extra` sections. Plots: `weights_plot`, `start_weight_plot`.
+- `examples/backtest_ensemble_2025.py` (`--seeds`, `--fast`, `--reuse`; predictions cached,
+  never committed); `tests/test_phase11.py`.
+
+## 2.0.0.dev10 — Phase 10 (unreleased)
+- M2 `NeuralRanker` (PyTorch CPU): linear + embeddings + MLP, guaranteed monotonicity,
+  Plackett-Luce + DNF loss, time-based early stopping, seed ensemble, determinism,
+  integrated gradients; `StrengthFeatures` refactor; ablation report; explanation plots;
+  `nn` extra and CPU torch in CI.
+
+## 2.0.0.dev9 — Phase 9 (unreleased)
+- Dataset OBSERVATIONS; Kalman strength filter; M1 / M1-pure; `score_sd` in the Monte
+  Carlo; `compare_models` and `gate`; strength plots.
+
+## 2.0.0.dev8 — Phase 8 (unreleased)
+- `RaceModel` protocol and shared probability maths; B0, B1, B2; walk-forward backtest with
+  leakage guards and the 2026 lock; metrics; report; calibration plot.
+
+## 2.0.0.dev7 — Phase 7 (unreleased)
+- Free data sources (f1db, OpenF1 historical, Open-Meteo); the leakage-free dataset.
+
+## 1.0.0 — Phase 6
+- Packaging as `pitwall-f1`, CLI, CI with ruff, pytest + coverage and mypy, network smoke tests.
+
+## 0.5.0 — Phase 5
+- Telemetry from Live Timing; speed trace, delta, gear and speed maps.
+
+## 0.4.0 — Phase 4
+- Live Timing with the user's own F1 TV token; compounds, tyre life, track status.
+
+## 0.3.0 — Phase 3
+- Tyre degradation, bootstrap pace intervals, Monte Carlo title odds.
+
+## 0.2.0 — Phase 2
+- Qualifying, sprints, standings, `Season`; gallery plots; title-fight calculator.
+
+## 0.1.0 — Phase 1
+- Jolpica client with cache and rate limiting; `Session`, `Laps`; lap-time scatter.

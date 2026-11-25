@@ -1,0 +1,131 @@
+# Weekly retraining and backtest on free CPU runners. The 10 M2 seeds run as a matrix
+# (each its own job), their predictions are uploaded as artifacts, and a final job
+# combines them with the other models, writes the reports and commits ONLY reports/.
+# Data and models are never committed (artifacts expire; the cache is not in git).
+name: train
+
+on:
+  schedule:
+    - cron: "17 3 * * 2"   # Tuesday 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      fast:
+        description: "Fast run (B0, B1, M1 only; no M2 matrix)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pitwall-train
+  cancel-in-progress: false
+
+env:
+  MPLBACKEND: Agg
+
+jobs:
+  dataset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: ~/.pitwall_cache
+          key: pitwall-${{ github.run_id }}
+          restore-keys: pitwall-
+      - run: pip install -e ".[ml]"
+      - run: pitwall-f1 dataset build --from 2018 --out artifacts/dataset.parquet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dataset
+          path: artifacts/dataset.parquet
+          retention-days: 3
+
+  m2-seed:
+    needs: dataset
+    if: ${{ !inputs.fast }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[ml]"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dataset
+          path: artifacts
+      - name: Backtest M2 with one seed
+        run: |
+          pitwall-f1 backtest --season 2024 --season 2025 --models M2-full \
+            --seed-index ${{ matrix.seed }} --dataset artifacts/dataset.parquet \
+            --save-predictions artifacts/m2-seed-${{ matrix.seed }}.parquet --no-report
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m2-seed-${{ matrix.seed }}
+          path: artifacts/m2-seed-${{ matrix.seed }}.parquet
+          retention-days: 7
+
+  assemble:
+    needs: [dataset, m2-seed]
+    if: ${{ always() && needs.dataset.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: write      # commits reports/ only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: ~/.pitwall_cache
+          key: pitwall-${{ github.run_id }}-assemble
+          restore-keys: pitwall-
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -e ".[ml]"
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Backtest the other models, add the M2 seeds, write reports
+        env:
+          FAST: ${{ inputs.fast }}
+        run: |
+          if [ "$FAST" = "true" ]; then
+            pitwall-f1 backtest --season 2024 --season 2025 --fast \
+              --dataset artifacts/dataset.parquet --save-history --write-config-if-missing
+          else
+            pitwall-f1 backtest --season 2024 --season 2025 \
+              --models "B0 grid slot" "B1 logistic" "B2 LightGBM" "M1 strength" \
+                       "M1-pure strength" "M3 simulator" \
+              --dataset artifacts/dataset.parquet --add-predictions "artifacts/m2-seed-*.parquet" \
+              --save-history --write-config-if-missing
+          fi
+      - name: Commit reports (never data or models)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports
+          if git diff --cached --quiet; then echo "Nothing new to commit."; exit 0; fi
+          git commit -m "Weekly backtest ($(date -u +%Y-%m-%d))"
+          for attempt in 1 2 3; do
+            git pull --rebase && git push && exit 0
+            sleep 15
+          done
+          exit 1

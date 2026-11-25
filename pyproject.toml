@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pitwall-f1"
+version = "2.0.0rc2"
+description = "A small, readable F1 data analysis and race-prediction library inspired by FastF1 (a learning project)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "pitwall-f1 contributors" }]
+keywords = ["formula1", "f1", "motorsport", "data-analysis", "pandas", "matplotlib"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "requests>=2.31",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7", "pytest-cov>=4", "mypy>=1.8", "ruff>=0.4",
+    "pyarrow>=14", "scikit-learn>=1.4", "lightgbm>=4.3", "torch>=2.2",
+    "pyyaml>=6", "jinja2>=3.1",
+]
+# Race prediction (v2).
+ml = ["pyarrow>=14", "scikit-learn>=1.4", "lightgbm>=4.3", "jinja2>=3.1"]
+# LaTeX race report (Phase 13). Also needs LuaLaTeX: a TeX distribution (TeX Live, MiKTeX).
+report = ["jinja2>=3.1"]
+# M2 neural network. On Linux install the CPU-only wheel FIRST (much smaller):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+nn = ["torch>=2.2"]
+
+[project.scripts]
+pitwall-f1 = "pitwall.cli:main"
+
+[project.urls]
+Source = "https://github.com/thanmayroobanathans/formula-1-prediction"
+
+[tool.setuptools.packages.find]
+include = ["pitwall*"]
+
+[tool.setuptools.package-data]
+pitwall = ["py.typed", "predict/*.csv", "report/templates/*.tex"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: calls real APIs; skipped unless --run-network is given"]
+
+[tool.coverage.run]
+source = ["pitwall"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 75  # start here; raise it as you add tests
+
+[tool.mypy]
+python_version = "3.12"  # numpy 2.x stubs need 3.12 syntax; the code still supports 3.11
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
