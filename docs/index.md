@@ -6,6 +6,7 @@ _Educational project, not betting advice. Not affiliated with Formula 1._
 
 | Race | Moment | Made (UTC) | Favourite | P(win) | Report |
 |---|---|---|---|---|---|
+| [2026 Qatar Grand Prix](predictions/2026-22-practice.md) | practice | 2026-11-28T04:21 | VER | 30.7% |  |
 | [2026 Qatar Grand Prix](predictions/2026-22-pre.md) | pre | 2026-11-25T01:40 | VER | 26.7% |  |
 
 Data: f1db (CC BY 4.0), Jolpica, OpenF1 (CC BY-NC-SA 4.0), Open-Meteo (CC BY 4.0).
